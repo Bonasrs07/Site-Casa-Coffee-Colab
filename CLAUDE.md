@@ -161,6 +161,7 @@ Todas as páginas ficam em `src/pages/` (uma URL cada) e precisam estar registra
 | Colab         | `colab.html`        | Residência Gente do Casa; carrossel de colabs; convite (mailto/WhatsApp) |
 | Cadastro      | `cadastro.html`     | criar conta (nome/telefone/e-mail/senha); estado "confirme seu e-mail" |
 | Login         | `login.html`        | entrar (e-mail/senha) + "esqueci a senha" (reset por e-mail)       |
+| Auth OK       | `auth-confirmado.html` | retorno do link de confirmação; detecta a sessão na URL         |
 | Perfil        | `conta/perfil.html` | área logada (protegida): dados, pontos, plano; editar nome/telefone |
 
 - **NAV** (array no `app.js`): Home, O Casa, Cardápio, Loja, Planos, Colab — todas
@@ -193,18 +194,31 @@ os dados. Nada de service_role no bundle.
 - **Cadastro** (`initCadastroPage`): valida no client (nome, e-mail, senha ≥ 8, confirmação);
   `signUp` passa `full_name` + `telefone` em `options.data` → a trigger `handle_new_user`
   popula o `profiles`. Com "Confirm email" ligado, mostra o estado "confirme seu e-mail".
+  O link de confirmação volta pra `auth-confirmado.html` via `options.emailRedirectTo`.
 - **Login** (`initLoginPage`): `signInWithPassword`; "esqueci a senha" usa
   `resetPasswordForEmail`. Após entrar, respeita `?redirect=` (só caminho interno —
   `sanitizeRedirect`, anti open-redirect).
+- **Confirmação** (`initAuthConfirmadoPage`, `auth-confirmado.html`): o supabase-js
+  detecta a sessão na URL (`detectSessionInUrl`, padrão). Logado → "ir pra minha conta";
+  senão → link pro login.
+- **Base URL dos e-mails** (`siteBase()`): `import.meta.env.VITE_SITE_URL || window.location.origin`
+  — **sem localhost hardcoded**. Serve `emailRedirectTo` (confirmação) e `redirectTo` (reset).
+  Em prod, defina `VITE_SITE_URL` como env var na Vercel apontando pro domínio final.
 - **Guard** (`requireAuth`): páginas com `[data-perfil-root]` (área `conta/`) exigem sessão;
   sem sessão → redireciona pro login guardando o destino. Nunca confia em role do client.
 - **Perfil** (`initPerfilPage`): mostra dados + pontos + plano (via `tier_slug`); edita
   nome/telefone com `update` na própria linha (RLS garante) **e** espelha no `auth.updateUser`
   (metadata) pra o header refletir o nome novo.
 
-> **Hardening (checklist de deploy):** em produção o **"Confirm email" DEVE estar LIGADO**
-> no Supabase (Auth settings). Pra testar o happy-path local, o humano pode desligar
-> temporariamente — mas **RE-LIGAR antes do deploy**.
+> **Hardening / go-live (checklist de deploy):**
+> - **"Confirm email" DEVE estar LIGADO** no Supabase (Auth settings). Pra testar o
+>   happy-path local, o humano pode desligar temporariamente — mas **RE-LIGAR antes do deploy**.
+> - **Site URL + Redirect URLs** (Supabase → Authentication → URL Configuration): precisam
+>   listar **tanto o localhost de dev** (ex.: `http://localhost:5173` e `http://localhost:4173`)
+>   **quanto o domínio final da Vercel** (prod). Sem isso, os links de confirmação/reset são
+>   rejeitados. **Isto é config de painel, não código.**
+> - Definir a env var **`VITE_SITE_URL`** na Vercel apontando pro domínio de prod (o código
+>   já usa `siteBase()`; localmente o fallback é `window.location.origin`).
 
 ---
 

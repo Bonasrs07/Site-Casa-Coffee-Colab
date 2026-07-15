@@ -30,6 +30,7 @@ export default defineConfig({
         colab: resolve(root, 'pages/colab.html'),
         cadastro: resolve(root, 'pages/cadastro.html'),
         login: resolve(root, 'pages/login.html'),
+        authConfirmado: resolve(root, 'pages/auth-confirmado.html'),
         perfil: resolve(root, 'pages/conta/perfil.html'),
       },
     },

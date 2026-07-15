@@ -167,6 +167,13 @@ async function signOut() {
   if (supabase) await supabase.auth.signOut();
 }
 
+// Base URL do site pra links de e-mail (confirmação/reset). Env-driven, sem
+// hardcode: usa VITE_SITE_URL (dev e prod) e cai pro origin atual se não houver.
+// (`||` e não `??` de propósito: trata VITE_SITE_URL="" como ausente.)
+function siteBase() {
+  return import.meta.env.VITE_SITE_URL || window.location.origin;
+}
+
 // Nome de exibição (metadata do signup > e-mail). Sempre escapado por quem injeta.
 function nomeDeExibicao(session) {
   const u = session?.user;
@@ -1231,8 +1238,12 @@ function initCadastroPage() {
       const { data, error } = await supabase.auth.signUp({
         email,
         password: senha,
-        // nome e telefone vão pro raw_user_meta_data → a trigger handle_new_user popula o profiles.
-        options: { data: { full_name: nome, telefone } },
+        options: {
+          // nome e telefone vão pro raw_user_meta_data → a trigger handle_new_user popula o profiles.
+          data: { full_name: nome, telefone },
+          // link do e-mail de confirmação volta pra uma página do próprio site (env-driven).
+          emailRedirectTo: `${siteBase()}/pages/auth-confirmado.html`,
+        },
       });
       if (error) return mostrarErro(mensagemDeErroAuth(error));
 
@@ -1321,7 +1332,7 @@ function initLoginPage() {
     if (!supabase) return mostrarErro('o reset de senha ainda não tá ligado por aqui (config pendente).');
     try {
       await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/pages/login.html`,
+        redirectTo: `${siteBase()}/pages/login.html`,
       });
     } catch {
       /* não revela se o e-mail existe — mensagem é sempre a mesma */
@@ -1457,6 +1468,40 @@ async function initPerfilPage() {
   root.querySelector('[data-signout]')?.addEventListener('click', doSignOut);
 }
 
+// --- Confirmação de e-mail (retorno do link) -----------------------------------
+// O supabase-js detecta a sessão na URL (detectSessionInUrl é padrão). Se logou,
+// oferece ir pra conta; se não (link velho/expirado), manda pro login com carinho.
+async function initAuthConfirmadoPage() {
+  const root = document.querySelector('[data-auth-confirmado-root]');
+  if (!root) return;
+
+  const render = (session) => {
+    root.innerHTML = session
+      ? `<span class="mx-auto grid h-16 w-16 place-items-center rounded-full bg-verde/10 text-verde">
+           <i data-lucide="heart" class="h-8 w-8"></i>
+         </span>
+         <h1 class="mt-5 font-titulo text-3xl sm:text-4xl">teu e-mail tá confirmado</h1>
+         <p class="mt-3 text-cafe/70">bem-vindo ao Casa. 💛 tua conta já tá pronta — chega mais.</p>
+         <a href="/pages/conta/perfil.html" class="btn-primary mt-7">ir pra minha conta</a>`
+      : `<span class="mx-auto grid h-16 w-16 place-items-center rounded-full bg-terracota/10 text-terracota">
+           <i data-lucide="mail" class="h-8 w-8"></i>
+         </span>
+         <h1 class="mt-5 font-titulo text-3xl sm:text-4xl">quase lá</h1>
+         <p class="mt-3 text-cafe/70">esse link pode já ter sido usado ou expirado. entra com teu e-mail e senha que a gente te recebe.</p>
+         <a href="/pages/login.html" class="btn-primary mt-7">ir pro login</a>`;
+    renderIcons();
+  };
+
+  // Primeira leitura + fallback: a sessão pode chegar logo após o parse da URL.
+  const session = await getSession();
+  render(session);
+  if (supabase && !session) {
+    supabase.auth.onAuthStateChange((_evento, s) => {
+      if (s) render(s);
+    });
+  }
+}
+
 // Configura os carrosséis do tipo "cards" (home e colab) + o hero (home).
 function initCarousels() {
   const hero = document.querySelector('[data-carousel="hero"] [data-carousel-track]');
@@ -1479,6 +1524,7 @@ export function initSite() {
   initCadastroPage(); // só age se houver [data-cadastro-form]
   initLoginPage(); // só age se houver [data-login-form]
   initPerfilPage(); // só age se houver [data-perfil-root] (protege a rota)
+  initAuthConfirmadoPage(); // só age se houver [data-auth-confirmado-root]
   initCarousels(); // só age se houver [data-carousel]
   renderIcons(); // ícones do header/footer + conteúdo estático restante
 }
