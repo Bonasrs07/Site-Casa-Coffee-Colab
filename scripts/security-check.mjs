@@ -131,6 +131,7 @@ const SENSIVEIS = new Set([
   'profiles', 'audit_log', 'subscriptions', 'orders', 'order_items',
   'points_ledger', 'redemptions', 'user_achievements',
   'coupons', 'pos_webhook_events', 'unclaimed_points',
+  'stripe_events',
 ]);
 let sensivelOk = true;
 for (const pol of policies) {

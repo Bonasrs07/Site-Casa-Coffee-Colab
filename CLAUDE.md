@@ -222,6 +222,49 @@ os dados. Nada de service_role no bundle.
 
 ---
 
+## Pagamentos (Fase 6 — Stripe)
+
+Fundação em **test mode**: assinatura dos 4 tiers via **Stripe Checkout** hospedado.
+Toda a lógica sensível fica nas **Edge Functions** (`supabase/functions/`), nunca no client.
+
+- **Código agnóstico de ambiente:** test e live rodam o MESMO código — muda só a
+  chave (secrets). Sem `if test/if live` no código.
+- **Segredos SÓ nas Edge Functions** (`supabase secrets`, nunca client/bundle/repo):
+  `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `SITE_URL`. Injetados pelo Supabase:
+  `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`. No **client** só `VITE_STRIPE_PUBLISHABLE_KEY`.
+- **`_shared/lib.ts`**: client Stripe (fetch http client do Deno), Supabase service_role,
+  CORS, `getUserFromRequest()` (valida o JWT), `jsonResponse()`, `getSiteUrl()`.
+- **`create-checkout-session`** (mode `subscription`): valida o JWT; lê tier +
+  `stripe_price_id` do **BANCO** pelo `tier_slug` (nunca confia em preço do client);
+  cria/reusa o Stripe Customer (guarda em `profiles.stripe_customer_id`); monta
+  `success_url`/`cancel_url` server-side a partir de `SITE_URL`. Retorna `url`; o front
+  redireciona (`initPlanosPage`).
+- **`stripe-webhook`** (deploy com `--no-verify-jwt`): SEMPRE verifica a assinatura
+  (`constructEventAsync`) + idempotência via `stripe_events` (PK = `event.id`). Trata
+  `checkout.session.completed` e `customer.subscription.created|updated|deleted` →
+  upsert em `subscriptions` (onConflict `stripe_subscription_id`) e espelha
+  `profiles.tier_slug`. Crédito de **pontos** é Fase 3 (só TODO comentado).
+- **Migration `0006_stripe`**: `stripe_events` (RLS on, só owner lê),
+  `profiles.stripe_customer_id`, índice UNIQUE em `subscriptions.stripe_subscription_id`,
+  e bloco comentado de `UPDATE`s pra popular `tiers.stripe_price_id` (rodar DEPOIS do
+  `scripts/stripe-seed.mjs`).
+- **Setup/deploy**: ver `supabase/functions/README.md`. Teste com o cartão
+  **4242 4242 4242 4242** (validade futura / CVC / CEP quaisquer).
+
+> **Go-live LIVE (o que muda no dia — só config/secrets, o código NÃO muda):**
+> - **Criar os produtos/preços em LIVE mode** (rodar `scripts/stripe-seed.mjs` com a
+>   `sk_live_…`), pegar os `price_id` live e rodar uma **migration NOVA** com os
+>   `UPDATE public.tiers set stripe_price_id=… ` live (a 0006 é imutável).
+> - Trocar os secrets das functions pros de LIVE: `supabase secrets set` de
+>   `STRIPE_SECRET_KEY` (`sk_live_…`), `STRIPE_WEBHOOK_SECRET` (`whsec_…` do endpoint
+>   **live**) e `SITE_URL` (domínio de prod). Re-deploy das duas functions.
+> - **Cadastrar um novo endpoint de webhook em LIVE mode** no Stripe (o whsec de test
+>   não vale em live), apontando pra URL da function `stripe-webhook`.
+> - No client/Vercel: `VITE_STRIPE_PUBLISHABLE_KEY` = `pk_live_…`.
+> - Conferir que os 4 tiers têm `stripe_price_id` live no banco antes de abrir as vendas.
+
+---
+
 ## Responsividade
 
 - **Mobile-first**, funcionando desde **~320px** (Galaxy Pocket) até **ultrawide (2560px+)**.
