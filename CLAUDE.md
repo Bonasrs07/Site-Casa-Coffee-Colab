@@ -223,3 +223,11 @@ Confiança zero no client:
 
 Gate de fim de leva (backend): rodar antes de commitar —
 1) grep por chaves secretas no código/dist; 2) confirmar RLS on em toda tabela nova; 3) npm audit; 4) nenhuma escrita sensível no client.
+
+## Migrations do banco (Supabase)
+
+Todo SQL que precisa rodar no SQL Editor do Supabase vira um arquivo numerado em supabase/migrations/, na ordem de aplicação (ex: 0001_init.sql, 0002_rls.sql, 0003_seed.sql). O humano aplica cada migration MANUALMENTE no SQL Editor, em ordem.
+- Migrations são APPEND-ONLY e IMUTÁVEIS: depois de aplicada, nunca edite. Mudança nova = arquivo novo numerado.
+- Cada migration deve ser autocontida e, quando possível, idempotente (IF NOT EXISTS / CREATE OR REPLACE).
+- Ao gerar migrations, SEMPRE diga ao humano exatamente quais arquivos rodar e em que ordem.
+- Não existe mais um schema.sql único — as migrations numeradas são a fonte da verdade do banco.
