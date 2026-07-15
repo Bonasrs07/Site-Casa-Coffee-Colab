@@ -53,16 +53,14 @@ create policy stripe_events_select_owner on public.stripe_events
   using (public.is_owner());
 
 -- =============================================================================
--- PRICE IDs DO STRIPE (test mode) — PREENCHER e rodar DEPOIS do stripe-seed.
--- Rode `node scripts/stripe-seed.mjs` (com a sk_test na env), copie os price_id
--- impressos e cole aqui, trocando os 'price_...'. Depois rode este bloco no
--- SQL Editor. Idempotente: pode rodar de novo pra corrigir/atualizar.
---
---   update public.tiers set stripe_price_id = 'price_...' where slug = 'bronze';
---   update public.tiers set stripe_price_id = 'price_...' where slug = 'prata';
---   update public.tiers set stripe_price_id = 'price_...' where slug = 'ouro';
---   update public.tiers set stripe_price_id = 'price_...' where slug = 'diamante';
+-- PRICE IDs DO STRIPE (test mode) — preenchidos por `node scripts/stripe-seed.mjs`.
+-- Idempotente: pode rodar de novo pra corrigir/atualizar. Se recriar os preços
+-- no Stripe (novos price_id), rode o seed de novo e atualize estes valores.
 --
 -- (No dia do go-live LIVE: gerar produtos/preços em LIVE mode, pegar os price_id
 --  live e rodar uma migration NOVA com os UPDATEs live — ver checklist no CLAUDE.md.)
 -- =============================================================================
+update public.tiers set stripe_price_id = 'price_1TtYEbFUPX1fv0T2ILYU9Vjb' where slug = 'bronze';
+update public.tiers set stripe_price_id = 'price_1TtYEcFUPX1fv0T27M5aHMSi' where slug = 'prata';
+update public.tiers set stripe_price_id = 'price_1TtYEdFUPX1fv0T29Hw7Rli5' where slug = 'ouro';
+update public.tiers set stripe_price_id = 'price_1TtYEeFUPX1fv0T2o6C0thVl' where slug = 'diamante';
