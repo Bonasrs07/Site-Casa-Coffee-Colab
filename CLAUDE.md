@@ -145,6 +145,32 @@ cores da marca, via utilitários no `styles.css`:
 
 ---
 
+## Páginas & navegação
+
+Todas as páginas ficam em `src/pages/` (uma URL cada) e precisam estar registradas no
+`rollupOptions.input` do `vite.config.js`. Header/footer vêm do `app.js`.
+
+| Página        | Arquivo             | Conteúdo                                                            |
+|---------------|---------------------|--------------------------------------------------------------------|
+| Home          | `home.html`         | hero + carrosséis + teasers (loja/planos) + playlists              |
+| O Casa        | `o-casa.html`       | sobre: história, DNA, selo "Feito no Casa", localização (mapa TODO) |
+| Cardápio      | `cardapio.html`     | menu literário (lista por seção) — informativo, **sem carrinho**   |
+| Loja          | `loja.html`         | catálogo + filtro por categoria                                    |
+| Produto       | `produto.html`      | detalhe via `?slug=` (conta como "Loja" na nav)                    |
+| Planos        | `planos.html`       | 4 tiers, sistema de pontos, conquistas; "assinar" é placeholder    |
+| Colab         | `colab.html`        | Residência Gente do Casa; carrossel de colabs; convite (mailto/WhatsApp) |
+
+- **NAV** (array no `app.js`): Home, O Casa, Cardápio, Loja, Planos, Colab — todas
+  apontam pras páginas reais. `activeNavHref()` detecta a página atual pelo pathname e
+  marca o item ativo com `aria-current="page"` + `text-terracota font-semibold`
+  (produto → "Loja"; raiz/`index.html` → "Home").
+- **Cardápio e Planos** usam preços fictícios com nota no rodapé ("* valores ilustrativos" /
+  "* valores fictícios, a definir"). Botão **"assinar"** (`initPlanosPage`) só revela um aviso
+  gentil — o checkout via Stripe vem na Fase 2.
+- **Colab** reutiliza o `setupCarousel` via `data-carousel="cards"` (mesmo contrato da home).
+
+---
+
 ## Responsividade
 
 - **Mobile-first**, funcionando desde **~320px** (Galaxy Pocket) até **ultrawide (2560px+)**.
@@ -176,3 +202,24 @@ cores da marca, via utilitários no `styles.css`:
 - `npm run dev` — servidor de desenvolvimento (Vite).
 - `npm run build` — build de produção.
 - `npm run preview` — pré-visualiza o build.
+
+## Segurança (regras obrigatórias — valem a partir da Fase 2)
+
+Segredos:
+- .env no .gitignore; .env.example (sem valores reais) versionado. NUNCA commitar segredo.
+- Só no client/Vercel: SUPABASE_URL, SUPABASE_ANON_KEY, STRIPE_PUBLISHABLE_KEY.
+- SÓ nas env vars das Edge Functions (nunca no bundle/Vercel/repo): SUPABASE_SERVICE_ROLE_KEY, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, POS_WEBHOOK_SECRET.
+
+Banco (RLS-by-default):
+- Toda tabela sobe com RLS habilitado e deny-by-default. Nenhuma tabela sem política explícita.
+- points_ledger, subscriptions, orders, redemptions, audit_log: cliente só LÊ o próprio registro; escrita só via Edge Function (service_role) ou trigger.
+- role do usuário vem de profiles (fonte confiável), NUNCA de valor enviado pelo client. Troca de papel só pelo owner e registrada no audit_log.
+
+Confiança zero no client:
+- Pontos calculados e gravados só server-side (ledger append-only). Front só lê.
+- create-checkout-session recalcula preço, desconto do tier e total pelo BANCO — nunca confia no valor/carrinho do client.
+- Webhooks (Stripe e PDV): verificar assinatura (Stripe signature / HMAC) + idempotência por id de evento (anti-replay). SEMPRE.
+- Escapar toda string vinda do banco antes de injetar no DOM (evitar XSS no JS vanilla).
+
+Gate de fim de leva (backend): rodar antes de commitar —
+1) grep por chaves secretas no código/dist; 2) confirmar RLS on em toda tabela nova; 3) npm audit; 4) nenhuma escrita sensível no client.
