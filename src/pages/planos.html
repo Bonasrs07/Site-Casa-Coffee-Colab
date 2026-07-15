@@ -55,7 +55,7 @@
                 <li>· 1 ponto a cada R$1</li>
                 <li>· agenda dos eventos antes de todo mundo</li>
               </ul>
-              <button type="button" data-assinar class="btn-primary mt-6">assinar</button>
+              <button type="button" data-assinar data-tier="bronze" class="btn-primary mt-6">assinar</button>
             </article>
 
             <!-- Prata -->
@@ -72,7 +72,7 @@
                 <li>· 1,25 ponto a cada R$1</li>
                 <li>· um café cortesia no mês do teu aniversário</li>
               </ul>
-              <button type="button" data-assinar class="btn-primary mt-6">assinar</button>
+              <button type="button" data-assinar data-tier="prata" class="btn-primary mt-6">assinar</button>
             </article>
 
             <!-- Ouro (favorito) -->
@@ -91,7 +91,7 @@
                 <li>· convite pros encontros da Residência Gente do Casa</li>
                 <li>· prioridade nos produtos de colab</li>
               </ul>
-              <button type="button" data-assinar class="btn-primary mt-6">assinar</button>
+              <button type="button" data-assinar data-tier="ouro" class="btn-primary mt-6">assinar</button>
             </article>
 
             <!-- Diamante -->
@@ -109,15 +109,17 @@
                 <li>· um lugar guardado nos eventos com casa cheia</li>
                 <li>· voz nas próximas colabs e blends do Casa</li>
               </ul>
-              <button type="button" data-assinar class="btn-primary mt-6">assinar</button>
+              <button type="button" data-assinar data-tier="diamante" class="btn-primary mt-6">assinar</button>
             </article>
           </div>
 
-          <!-- Aviso do checkout (aparece ao clicar em "assinar") -->
-          <p class="mt-6 hidden rounded-xl bg-caramelo/15 px-4 py-3 text-center text-sm text-cafe" data-assinar-note>
-            a assinatura chega na próxima fase — o pagamento via Stripe vem aí. por
-            ora, fica um pouco e já deixa teu plano escolhido no coração. 💛
-          </p>
+          <!-- Área de aviso/erro do checkout (preenchida pelo app.js quando precisa) -->
+          <p
+            class="mt-6 hidden rounded-xl bg-caramelo/15 px-4 py-3 text-center text-sm text-cafe"
+            data-assinar-note
+            role="status"
+            aria-live="polite"
+          ></p>
 
           <p class="mt-6 text-xs text-cafe/50">* valores fictícios, a definir.</p>
         </div>

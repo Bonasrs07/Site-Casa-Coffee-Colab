@@ -1115,10 +1115,50 @@ function initPlanosPage() {
   const botoes = document.querySelectorAll('[data-assinar]');
   if (botoes.length === 0) return;
   const nota = document.querySelector('[data-assinar-note]');
+
+  const avisar = (msg) => {
+    if (!nota) return;
+    nota.textContent = msg; // textContent (nunca innerHTML) — sem risco de XSS
+    nota.classList.remove('hidden');
+    nota.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  };
+
   botoes.forEach((btn) =>
-    btn.addEventListener('click', () => {
-      nota?.classList.remove('hidden');
-      nota?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    btn.addEventListener('click', async () => {
+      const tier = btn.dataset.tier;
+      if (!tier) return;
+
+      // Config pendente → degrada com aviso gentil, sem quebrar.
+      if (!supabase) return avisar('a assinatura ainda não tá ligada por aqui (config pendente). 💛');
+
+      // Deslogado → manda pro login guardando o destino (volta pros planos).
+      const session = await getSession();
+      if (!session) {
+        const destino = encodeURIComponent('/pages/planos.html');
+        window.location.href = `/pages/login.html?redirect=${destino}`;
+        return;
+      }
+
+      const textoBtn = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'te levando pro pagamento…';
+      try {
+        // O preço vem do BANCO na Edge Function — o client só manda o tier_slug.
+        // functions.invoke já envia o JWT da sessão no Authorization (a function valida).
+        const { data, error } = await supabase.functions.invoke('create-checkout-session', {
+          body: { tier_slug: tier },
+        });
+        if (error || !data?.url) {
+          avisar('não deu pra abrir o pagamento agora. tenta de novo daqui a pouco? 💛');
+          return;
+        }
+        window.location.href = data.url; // Checkout hospedado do Stripe
+      } catch {
+        avisar('a gente não conseguiu falar com o servidor agora. confere tua conexão?');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = textoBtn;
+      }
     })
   );
 }

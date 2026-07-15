@@ -35,6 +35,8 @@ export default defineConfig({
         cadastro: resolve(root, 'pages/cadastro.html'),
         login: resolve(root, 'pages/login.html'),
         authConfirmado: resolve(root, 'pages/auth-confirmado.html'),
+        checkoutSucesso: resolve(root, 'pages/checkout-sucesso.html'),
+        checkoutCancelado: resolve(root, 'pages/checkout-cancelado.html'),
         perfil: resolve(root, 'pages/conta/perfil.html'),
       },
     },
