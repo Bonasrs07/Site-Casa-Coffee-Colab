@@ -14,6 +14,9 @@ export default defineConfig({
   envDir: __dirname,
   publicDir: resolve(__dirname, 'src/assets'),
   server: {
+    // host: true expõe na rede local (0.0.0.0) sem precisar de "-- --host".
+    // Aí dá pra abrir no celular/outro PC via http://<IP-da-maquina>:5173/
+    host: true,
     open: '/pages/home.html',
   },
   build: {
@@ -21,6 +24,7 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       input: {
+        index: resolve(root, 'index.html'),
         home: resolve(root, 'pages/home.html'),
         oCasa: resolve(root, 'pages/o-casa.html'),
         cardapio: resolve(root, 'pages/cardapio.html'),
