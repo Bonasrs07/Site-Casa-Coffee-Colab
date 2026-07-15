@@ -223,6 +223,7 @@ Confiança zero no client:
 
 Gate de fim de leva (backend): rodar antes de commitar —
 1) grep por chaves secretas no código/dist; 2) confirmar RLS on em toda tabela nova; 3) npm audit; 4) nenhuma escrita sensível no client.
+- Implementado em `npm run security-check` (`scripts/security-check.mjs`, estático) + `scripts/check-rls.sql` (prova de RLS ao vivo no SQL Editor, incl. teste negativo como anon). Rodar o security-check ANTES de commitar/subir.
 
 ## Migrations do banco (Supabase)
 
@@ -231,3 +232,5 @@ Todo SQL que precisa rodar no SQL Editor do Supabase vira um arquivo numerado em
 - Cada migration deve ser autocontida e, quando possível, idempotente (IF NOT EXISTS / CREATE OR REPLACE).
 - Ao gerar migrations, SEMPRE diga ao humano exatamente quais arquivos rodar e em que ordem.
 - Não existe mais um schema.sql único — as migrations numeradas são a fonte da verdade do banco.
+- Aplicadas até agora: `0001_init` (tabelas + funções de papel + triggers), `0002_rls` (RLS + policies), `0003_seed` (tiers/produtos/conquistas/parceiros), `0004_reconcile` (5 tabelas da Fase 3: `rewards_catalog`, `events`, `coupons`, `pos_webhook_events`, `unclaimed_points` + colunas `tiers.points_multiplier/discount_percent` e `profiles.points_balance/tier_slug`).
+- `partners` e `tiers` têm PK = **slug**; FKs pra elas seguem a convenção `*_slug` (ex.: `profiles.tier_slug`, `rewards_catalog.partner_slug`), não `*_id`.
