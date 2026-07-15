@@ -21,6 +21,15 @@ import {
   Plus,
   Minus,
   Trash2,
+  MapPin,
+  Heart,
+  Sparkles,
+  Hand,
+  Award,
+  Star,
+  Gift,
+  Mail,
+  MessageCircle,
 } from 'lucide';
 
 // Ícones Lucide usados no site. createIcons() substitui <i data-lucide="..."> por SVG.
@@ -37,6 +46,15 @@ const LUCIDE_ICONS = {
   Plus,
   Minus,
   Trash2,
+  MapPin,
+  Heart,
+  Sparkles,
+  Hand,
+  Award,
+  Star,
+  Gift,
+  Mail,
+  MessageCircle,
 };
 function renderIcons() {
   createIcons({ icons: LUCIDE_ICONS });
@@ -61,16 +79,26 @@ const MARCA = {
   ],
 };
 
-// Navegação principal. Por ora aponta pra âncoras de seções da home.
-// TODO (próximas levas): repointar pras páginas reais (/pages/o-casa.html, etc.).
+// Navegação principal. Aponta pras páginas reais (cada uma é uma URL).
 const NAV = [
-  { rotulo: 'Home', href: '#topo' },
-  { rotulo: 'O Casa', href: '#hero' },
-  { rotulo: 'Cardápio', href: '#feito-no-casa' },
+  { rotulo: 'Home', href: '/pages/home.html' },
+  { rotulo: 'O Casa', href: '/pages/o-casa.html' },
+  { rotulo: 'Cardápio', href: '/pages/cardapio.html' },
   { rotulo: 'Loja', href: '/pages/loja.html' },
-  { rotulo: 'Planos', href: '#planos' },
-  { rotulo: 'Colab', href: '#gente-do-casa' },
+  { rotulo: 'Planos', href: '/pages/planos.html' },
+  { rotulo: 'Colab', href: '/pages/colab.html' },
 ];
+
+// Qual item da NAV corresponde à página atual (pra marcar como ativo).
+// produto.html conta como "Loja"; a raiz "/" conta como "Home".
+function activeNavHref() {
+  const path = window.location.pathname;
+  const base = path.substring(path.lastIndexOf('/') + 1) || 'home.html';
+  if (base === '' || base === 'index.html') return '/pages/home.html';
+  if (base === 'produto.html') return '/pages/loja.html';
+  const found = NAV.find((item) => item.href.endsWith('/' + base));
+  return found ? found.href : null;
+}
 
 // =============================================================================
 // CATÁLOGO (MOCK — virá do Supabase na Fase 2)
@@ -277,15 +305,21 @@ function renderHeader() {
   const slot = document.getElementById('site-header');
   if (!slot) return;
 
-  const linksDesktop = NAV.map(
-    (item) =>
-      `<a href="${item.href}" class="text-cafe/80 hover:text-terracota transition-colors">${item.rotulo}</a>`
-  ).join('');
+  const ativo = activeNavHref();
 
-  const linksMobile = NAV.map(
-    (item) =>
-      `<a href="${item.href}" class="block py-3 text-lg text-cafe hover:text-terracota transition-colors" data-menu-link>${item.rotulo}</a>`
-  ).join('');
+  const linksDesktop = NAV.map((item) => {
+    const isAtivo = item.href === ativo;
+    return `<a href="${item.href}"${isAtivo ? ' aria-current="page"' : ''} class="transition-colors ${
+      isAtivo ? 'font-semibold text-terracota' : 'text-cafe/80 hover:text-terracota'
+    }">${item.rotulo}</a>`;
+  }).join('');
+
+  const linksMobile = NAV.map((item) => {
+    const isAtivo = item.href === ativo;
+    return `<a href="${item.href}"${isAtivo ? ' aria-current="page"' : ''} class="block py-3 text-lg transition-colors ${
+      isAtivo ? 'font-semibold text-terracota' : 'text-cafe hover:text-terracota'
+    }" data-menu-link>${item.rotulo}</a>`;
+  }).join('');
 
   slot.innerHTML = `
     <header id="topo" class="sticky top-0 z-50 transition-colors duration-300" data-site-header>
@@ -301,7 +335,7 @@ function renderHeader() {
         </nav>
 
         <!-- CTA desktop -->
-        <a href="#feito-no-casa" class="btn-primary hidden lg:inline-flex">${MARCA.cta}</a>
+        <a href="/pages/cardapio.html" class="btn-primary hidden lg:inline-flex">${MARCA.cta}</a>
 
         <!-- Carrinho -->
         <button
@@ -342,7 +376,7 @@ function renderHeader() {
       >
         <nav class="mx-auto max-w-7xl px-4 py-4 sm:px-6" aria-label="Navegação mobile">
           ${linksMobile}
-          <a href="#feito-no-casa" class="btn-primary mt-4 w-full" data-menu-link>${MARCA.cta}</a>
+          <a href="/pages/cardapio.html" class="btn-primary mt-4 w-full" data-menu-link>${MARCA.cta}</a>
         </nav>
       </div>
     </header>
@@ -969,7 +1003,23 @@ function initProductPage() {
   renderIcons();
 }
 
-// Configura os 3 carrosséis da home (se existirem na página).
+// =============================================================================
+// PÁGINA DE PLANOS (planos.html) — botões "assinar" são placeholder.
+// O checkout (Stripe) vem na Fase 2; por ora só revela o aviso gentil.
+// =============================================================================
+function initPlanosPage() {
+  const botoes = document.querySelectorAll('[data-assinar]');
+  if (botoes.length === 0) return;
+  const nota = document.querySelector('[data-assinar-note]');
+  botoes.forEach((btn) =>
+    btn.addEventListener('click', () => {
+      nota?.classList.remove('hidden');
+      nota?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    })
+  );
+}
+
+// Configura os carrosséis do tipo "cards" (home e colab) + o hero (home).
 function initCarousels() {
   const hero = document.querySelector('[data-carousel="hero"] [data-carousel-track]');
   if (hero) setupCarousel(hero, { dots: true, autoplay: true, interval: 5500 });
@@ -986,6 +1036,7 @@ export function initSite() {
   initCart(); // drawer + badge (todas as páginas)
   initCatalogPage(); // só age se houver [data-catalog-grid]
   initProductPage(); // só age se houver [data-product-root]
+  initPlanosPage(); // só age se houver [data-assinar]
   initCarousels(); // só age se houver [data-carousel]
   renderIcons(); // ícones do header/footer + conteúdo estático restante
 }
