@@ -62,6 +62,14 @@
            focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-terracota;
   }
 
+  /* Pílula de filtro (catálogo da loja). Estado ativo é aplicado via JS
+     (bg-terracota text-bege border-terracota). */
+  .filtro {
+    @apply rounded-full border border-cafe/20 px-4 py-2 text-sm font-medium text-cafe
+           transition-colors hover:border-terracota
+           focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-terracota;
+  }
+
   /* -------------------------------------------------------------------------
      Placeholders de foto (gradientes da marca) — TODO: trocar por fotos reais.
      Ver CLAUDE.md › "Imagens / fotos reais (TODO)".
