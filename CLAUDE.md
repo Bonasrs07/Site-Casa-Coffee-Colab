@@ -159,6 +159,9 @@ Todas as páginas ficam em `src/pages/` (uma URL cada) e precisam estar registra
 | Produto       | `produto.html`      | detalhe via `?slug=` (conta como "Loja" na nav)                    |
 | Planos        | `planos.html`       | 4 tiers, sistema de pontos, conquistas; "assinar" é placeholder    |
 | Colab         | `colab.html`        | Residência Gente do Casa; carrossel de colabs; convite (mailto/WhatsApp) |
+| Cadastro      | `cadastro.html`     | criar conta (nome/telefone/e-mail/senha); estado "confirme seu e-mail" |
+| Login         | `login.html`        | entrar (e-mail/senha) + "esqueci a senha" (reset por e-mail)       |
+| Perfil        | `conta/perfil.html` | área logada (protegida): dados, pontos, plano; editar nome/telefone |
 
 - **NAV** (array no `app.js`): Home, O Casa, Cardápio, Loja, Planos, Colab — todas
   apontam pras páginas reais. `activeNavHref()` detecta a página atual pelo pathname e
@@ -168,6 +171,40 @@ Todas as páginas ficam em `src/pages/` (uma URL cada) e precisam estar registra
   "* valores fictícios, a definir"). Botão **"assinar"** (`initPlanosPage`) só revela um aviso
   gentil — o checkout via Stripe vem na Fase 2.
 - **Colab** reutiliza o `setupCarousel` via `data-carousel="cards"` (mesmo contrato da home).
+
+---
+
+## Autenticação (Fase 2 — Supabase Auth)
+
+Toda a lógica fica no bloco `// ===== AUTH =====` do `app.js`. **Só a anon key no client**
+(`import.meta.env.VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`) — a RLS é quem protege
+os dados. Nada de service_role no bundle.
+
+- **Client**: `export const supabase` (via `@supabase/supabase-js`). Se o `.env` não
+  estiver preenchido (placeholder), `supabase` fica `null` e as telas degradam com aviso
+  gentil, sem quebrar.
+- **Helpers**: `getSession()`, `getUser()`, `getProfile()` (lê a **própria** linha do
+  `profiles` — RLS `id = auth.uid()`), `signOut()`. O **papel (role) vem sempre do
+  `profiles`**, nunca de valor do client.
+- **Header**: `initAuth()` + `updateAuthUI(session)` preenchem `[data-auth-slot]` /
+  `[data-auth-slot-mobile]`. Deslogado → "entrar"; logado → nome + "sair". Reage a
+  `onAuthStateChange` (inclusive login/logout em outra aba). O nome de exibição vem do
+  `user_metadata.full_name` e é **sempre escapado** (`escapeHtml`) antes de ir pro DOM.
+- **Cadastro** (`initCadastroPage`): valida no client (nome, e-mail, senha ≥ 8, confirmação);
+  `signUp` passa `full_name` + `telefone` em `options.data` → a trigger `handle_new_user`
+  popula o `profiles`. Com "Confirm email" ligado, mostra o estado "confirme seu e-mail".
+- **Login** (`initLoginPage`): `signInWithPassword`; "esqueci a senha" usa
+  `resetPasswordForEmail`. Após entrar, respeita `?redirect=` (só caminho interno —
+  `sanitizeRedirect`, anti open-redirect).
+- **Guard** (`requireAuth`): páginas com `[data-perfil-root]` (área `conta/`) exigem sessão;
+  sem sessão → redireciona pro login guardando o destino. Nunca confia em role do client.
+- **Perfil** (`initPerfilPage`): mostra dados + pontos + plano (via `tier_slug`); edita
+  nome/telefone com `update` na própria linha (RLS garante) **e** espelha no `auth.updateUser`
+  (metadata) pra o header refletir o nome novo.
+
+> **Hardening (checklist de deploy):** em produção o **"Confirm email" DEVE estar LIGADO**
+> no Supabase (Auth settings). Pra testar o happy-path local, o humano pode desligar
+> temporariamente — mas **RE-LIGAR antes do deploy**.
 
 ---
 
@@ -232,5 +269,5 @@ Todo SQL que precisa rodar no SQL Editor do Supabase vira um arquivo numerado em
 - Cada migration deve ser autocontida e, quando possível, idempotente (IF NOT EXISTS / CREATE OR REPLACE).
 - Ao gerar migrations, SEMPRE diga ao humano exatamente quais arquivos rodar e em que ordem.
 - Não existe mais um schema.sql único — as migrations numeradas são a fonte da verdade do banco.
-- Aplicadas até agora: `0001_init` (tabelas + funções de papel + triggers), `0002_rls` (RLS + policies), `0003_seed` (tiers/produtos/conquistas/parceiros), `0004_reconcile` (5 tabelas da Fase 3: `rewards_catalog`, `events`, `coupons`, `pos_webhook_events`, `unclaimed_points` + colunas `tiers.points_multiplier/discount_percent` e `profiles.points_balance/tier_slug`).
+- Aplicadas até agora: `0001_init` (tabelas + funções de papel + triggers), `0002_rls` (RLS + policies), `0003_seed` (tiers/produtos/conquistas/parceiros), `0004_reconcile` (5 tabelas da Fase 3: `rewards_catalog`, `events`, `coupons`, `pos_webhook_events`, `unclaimed_points` + colunas `tiers.points_multiplier/discount_percent` e `profiles.points_balance/tier_slug`), `0005_profiles_phone` (coluna `profiles.telefone` + `handle_new_user` populando telefone + trigger `prevent_points_tamper` blindando `points_balance`/`tier_slug` contra escrita do client).
 - `partners` e `tiers` têm PK = **slug**; FKs pra elas seguem a convenção `*_slug` (ex.: `profiles.tier_slug`, `rewards_catalog.partner_slug`), não `*_id`.

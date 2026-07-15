@@ -30,7 +30,10 @@ import {
   Gift,
   Mail,
   MessageCircle,
+  User,
+  LogOut,
 } from 'lucide';
+import { createClient } from '@supabase/supabase-js';
 
 // Ícones Lucide usados no site. createIcons() substitui <i data-lucide="..."> por SVG.
 // Chamar sempre DEPOIS de injetar markup novo no DOM.
@@ -55,6 +58,8 @@ const LUCIDE_ICONS = {
   Gift,
   Mail,
   MessageCircle,
+  User,
+  LogOut,
 };
 function renderIcons() {
   createIcons({ icons: LUCIDE_ICONS });
@@ -98,6 +103,93 @@ function activeNavHref() {
   if (base === 'produto.html') return '/pages/loja.html';
   const found = NAV.find((item) => item.href.endsWith('/' + base));
   return found ? found.href : null;
+}
+
+// =============================================================================
+// AUTH (Supabase Auth)
+// Só a ANON key no client — a RLS do banco é quem protege os dados (ver CLAUDE.md).
+// O papel (role) do usuário vem SEMPRE do profiles (banco), nunca do client.
+// Sessão persiste no localStorage (padrão do supabase-js) e sobrevive à navegação.
+// =============================================================================
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const supabaseConfigurado =
+  Boolean(SUPABASE_URL && SUPABASE_ANON_KEY) &&
+  !/placeholder/i.test(SUPABASE_URL);
+
+// Client único (ou null se ainda não configurado — as telas degradam com aviso gentil).
+export const supabase = supabaseConfigurado
+  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  : null;
+
+if (!supabaseConfigurado) {
+  // Aviso só no console — nada de segredo, nada de quebrar a página.
+  console.warn(
+    '[Casa] Supabase não configurado. Preencha VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no .env.'
+  );
+}
+
+// Escapa toda string vinda do banco/usuário antes de injetar no DOM (anti-XSS).
+function escapeHtml(valor) {
+  return String(valor ?? '').replace(
+    /[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])
+  );
+}
+
+// --- Helpers de sessão/perfil --------------------------------------------------
+async function getSession() {
+  if (!supabase) return null;
+  const { data } = await supabase.auth.getSession();
+  return data.session ?? null;
+}
+
+async function getUser() {
+  const session = await getSession();
+  return session?.user ?? null;
+}
+
+// Lê a PRÓPRIA linha do profiles (RLS: id = auth.uid()). role vem daqui, não do client.
+async function getProfile() {
+  if (!supabase) return null;
+  const user = await getUser();
+  if (!user) return null;
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('full_name, telefone, role, points_balance, tier_slug')
+    .eq('id', user.id)
+    .single();
+  if (error) return null;
+  return data;
+}
+
+async function signOut() {
+  if (supabase) await supabase.auth.signOut();
+}
+
+// Nome de exibição (metadata do signup > e-mail). Sempre escapado por quem injeta.
+function nomeDeExibicao(session) {
+  const u = session?.user;
+  if (!u) return '';
+  return u.user_metadata?.full_name || u.email || 'você';
+}
+
+// Traduz erros do Supabase pro tom da casa (sem vazar detalhe técnico).
+function mensagemDeErroAuth(error) {
+  const m = (error?.message || '').toLowerCase();
+  if (m.includes('already registered') || m.includes('already been registered'))
+    return 'parece que esse e-mail já tem conta por aqui. tenta entrar? 💛';
+  if (m.includes('invalid login credentials'))
+    return 'o e-mail ou a senha não bateram. tenta de novo, com calma.';
+  if (m.includes('email not confirmed'))
+    return 'falta confirmar teu e-mail. dá uma olhada na tua caixa de entrada?';
+  if (m.includes('password') && m.includes('at least'))
+    return 'a senha precisa de pelo menos 8 caracteres.';
+  if (m.includes('rate limit') || m.includes('too many'))
+    return 'muitas tentativas seguidas. respira, toma um café e tenta daqui a pouco.';
+  if (m.includes('failed to fetch') || m.includes('networkerror'))
+    return 'a gente não conseguiu falar com o servidor agora. confere tua conexão?';
+  return 'algo não saiu como esperado. tenta de novo daqui a pouco?';
 }
 
 // =============================================================================
@@ -337,6 +429,9 @@ function renderHeader() {
         <!-- CTA desktop -->
         <a href="/pages/cardapio.html" class="btn-primary hidden lg:inline-flex">${MARCA.cta}</a>
 
+        <!-- Auth (desktop) — preenchido por updateAuthUI conforme a sessão -->
+        <div class="hidden items-center lg:flex" data-auth-slot></div>
+
         <!-- Carrinho -->
         <button
           type="button"
@@ -377,6 +472,8 @@ function renderHeader() {
         <nav class="mx-auto max-w-7xl px-4 py-4 sm:px-6" aria-label="Navegação mobile">
           ${linksMobile}
           <a href="/pages/cardapio.html" class="btn-primary mt-4 w-full" data-menu-link>${MARCA.cta}</a>
+          <!-- Auth (mobile) — preenchido por updateAuthUI conforme a sessão -->
+          <div class="mt-4 border-t border-cafe/10 pt-4" data-auth-slot-mobile></div>
         </nav>
       </div>
     </header>
@@ -1019,6 +1116,347 @@ function initPlanosPage() {
   );
 }
 
+// =============================================================================
+// AUTH — UI do header, guard de rota e páginas (cadastro/login/perfil).
+// =============================================================================
+
+// Sai da conta e volta pra home.
+async function doSignOut() {
+  await signOut();
+  window.location.href = '/pages/home.html';
+}
+
+// Preenche os slots de auth do header conforme a sessão (deslogado ↔ logado).
+function updateAuthUI(session) {
+  const nome = escapeHtml(nomeDeExibicao(session)); // sempre escapado (anti-XSS)
+
+  const slot = document.querySelector('[data-auth-slot]');
+  if (slot) {
+    slot.innerHTML = session
+      ? `<a href="/pages/conta/perfil.html" class="inline-flex items-center gap-2 text-sm font-medium text-cafe hover:text-terracota">
+           <span class="grid h-8 w-8 place-items-center rounded-full bg-terracota/10 text-terracota"><i data-lucide="user" class="h-4 w-4"></i></span>
+           <span class="max-w-[9rem] truncate">${nome}</span>
+         </a>
+         <button type="button" data-signout class="ml-3 inline-flex items-center gap-1 text-sm text-cafe/70 hover:text-terracota">
+           <i data-lucide="log-out" class="h-4 w-4"></i>sair
+         </button>`
+      : `<a href="/pages/login.html" class="btn-ghost">entrar</a>`;
+  }
+
+  const slotM = document.querySelector('[data-auth-slot-mobile]');
+  if (slotM) {
+    slotM.innerHTML = session
+      ? `<a href="/pages/conta/perfil.html" class="flex items-center gap-2 py-2 text-lg text-cafe" data-menu-link>
+           <i data-lucide="user" class="h-5 w-5"></i>${nome}
+         </a>
+         <button type="button" data-signout class="mt-2 inline-flex items-center gap-2 text-cafe/70 hover:text-terracota">
+           <i data-lucide="log-out" class="h-5 w-5"></i>sair da conta
+         </button>`
+      : `<a href="/pages/login.html" class="btn-ghost w-full" data-menu-link>entrar</a>`;
+  }
+
+  // Liga o "sair" só nos botões do header (o perfil liga o seu próprio).
+  [slot, slotM].forEach((s) => s?.querySelector('[data-signout]')?.addEventListener('click', doSignOut));
+  renderIcons();
+}
+
+// Header reflete o estado de auth e reage a login/logout (inclusive entre abas).
+async function initAuth() {
+  updateAuthUI(await getSession());
+  if (supabase) {
+    supabase.auth.onAuthStateChange((_evento, session) => updateAuthUI(session));
+  }
+}
+
+// Guard: exige sessão. Sem sessão → manda pro login guardando o destino.
+// NUNCA confia em role do client — quem precisar de papel lê do profiles (banco).
+async function requireAuth() {
+  const session = await getSession();
+  if (!session) {
+    const destino = encodeURIComponent(window.location.pathname + window.location.search);
+    window.location.replace(`/pages/login.html?redirect=${destino}`);
+    return null;
+  }
+  return session;
+}
+
+// Só aceita redirect interno (começa com "/" e não "//") — anti open-redirect.
+function sanitizeRedirect(valor) {
+  if (valor && /^\/(?!\/)/.test(valor)) return valor;
+  return null;
+}
+
+const EMAIL_RE = /^\S+@\S+\.\S+$/;
+
+// --- Cadastro ------------------------------------------------------------------
+function initCadastroPage() {
+  const form = document.querySelector('[data-cadastro-form]');
+  if (!form) return;
+
+  const erroEl = form.querySelector('[data-form-erro]');
+  const btn = form.querySelector('[type="submit"]');
+  const mostrarErro = (msg) => {
+    if (!erroEl) return;
+    erroEl.textContent = msg;
+    erroEl.classList.remove('hidden');
+  };
+  const limparErro = () => {
+    if (!erroEl) return;
+    erroEl.textContent = '';
+    erroEl.classList.add('hidden');
+  };
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    limparErro();
+
+    const nome = form.nome.value.trim();
+    const telefone = form.telefone.value.trim();
+    const email = form.email.value.trim();
+    const senha = form.senha.value;
+    const confirma = form.confirma.value;
+
+    if (!nome) return mostrarErro('conta pra gente teu nome? 💛');
+    if (!EMAIL_RE.test(email)) return mostrarErro('esse e-mail parece incompleto. dá uma conferida?');
+    if (senha.length < 8) return mostrarErro('a senha precisa de pelo menos 8 caracteres.');
+    if (senha !== confirma) return mostrarErro('as senhas não são iguais. confere pra gente?');
+    if (!supabase) return mostrarErro('o cadastro ainda não tá ligado por aqui (config pendente).');
+
+    const textoBtn = btn?.textContent;
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'criando tua conta…';
+    }
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password: senha,
+        // nome e telefone vão pro raw_user_meta_data → a trigger handle_new_user popula o profiles.
+        options: { data: { full_name: nome, telefone } },
+      });
+      if (error) return mostrarErro(mensagemDeErroAuth(error));
+
+      if (data.session) {
+        // "Confirm email" desligado → já entrou. Vai pro perfil.
+        window.location.href = '/pages/conta/perfil.html';
+        return;
+      }
+
+      // "Confirm email" ligado → estado "confirme seu e-mail".
+      form.classList.add('hidden');
+      const sucesso = document.querySelector('[data-cadastro-sucesso]');
+      if (sucesso) {
+        const alvo = sucesso.querySelector('[data-email-alvo]');
+        if (alvo) alvo.textContent = email; // textContent (não innerHTML) — sem risco de XSS
+        sucesso.classList.remove('hidden');
+      }
+    } catch (err) {
+      mostrarErro(mensagemDeErroAuth(err));
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = textoBtn;
+      }
+    }
+  });
+}
+
+// --- Login (+ esqueci a senha) -------------------------------------------------
+function initLoginPage() {
+  const form = document.querySelector('[data-login-form]');
+  if (!form) return;
+
+  const erroEl = form.querySelector('[data-form-erro]');
+  const btn = form.querySelector('[type="submit"]');
+  const resetMsg = form.querySelector('[data-reset-msg]');
+  const redirect = sanitizeRedirect(new URLSearchParams(window.location.search).get('redirect'));
+
+  const mostrarErro = (msg) => {
+    if (!erroEl) return;
+    erroEl.textContent = msg;
+    erroEl.classList.remove('hidden');
+  };
+  const limparErro = () => {
+    if (!erroEl) return;
+    erroEl.textContent = '';
+    erroEl.classList.add('hidden');
+  };
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    limparErro();
+    if (resetMsg) resetMsg.classList.add('hidden');
+
+    const email = form.email.value.trim();
+    const senha = form.senha.value;
+    if (!EMAIL_RE.test(email)) return mostrarErro('esse e-mail parece incompleto. dá uma conferida?');
+    if (!senha) return mostrarErro('falta a senha. 💛');
+    if (!supabase) return mostrarErro('o login ainda não tá ligado por aqui (config pendente).');
+
+    const textoBtn = btn?.textContent;
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'entrando…';
+    }
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ email, password: senha });
+      if (error) return mostrarErro(mensagemDeErroAuth(error));
+      window.location.href = redirect || '/pages/conta/perfil.html';
+    } catch (err) {
+      mostrarErro(mensagemDeErroAuth(err));
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = textoBtn;
+      }
+    }
+  });
+
+  // Esqueci a senha — envia o link de redefinição (Supabase resetPasswordForEmail).
+  form.querySelector('[data-reset]')?.addEventListener('click', async () => {
+    limparErro();
+    const email = form.email.value.trim();
+    if (!EMAIL_RE.test(email))
+      return mostrarErro('preenche teu e-mail ali em cima que a gente te manda o link. 💛');
+    if (!supabase) return mostrarErro('o reset de senha ainda não tá ligado por aqui (config pendente).');
+    try {
+      await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/pages/login.html`,
+      });
+    } catch {
+      /* não revela se o e-mail existe — mensagem é sempre a mesma */
+    }
+    if (resetMsg) {
+      resetMsg.textContent = 'se esse e-mail tiver conta, o link pra criar uma senha nova já tá a caminho. 💛';
+      resetMsg.classList.remove('hidden');
+    }
+  });
+}
+
+// --- Perfil (área logada) ------------------------------------------------------
+async function initPerfilPage() {
+  const root = document.querySelector('[data-perfil-root]');
+  if (!root) return;
+
+  const session = await requireAuth();
+  if (!session) return; // já redirecionou pro login
+
+  const email = escapeHtml(session.user.email || '');
+  const profile = await getProfile();
+  const nome = escapeHtml(profile?.full_name || nomeDeExibicao(session));
+  const telefone = escapeHtml(profile?.telefone || '');
+  const pontos = Number(profile?.points_balance || 0).toLocaleString('pt-BR');
+
+  // Nome do plano (tiers é leitura pública). Sem plano ainda → texto gentil.
+  let plano = 'ainda sem plano';
+  if (profile?.tier_slug && supabase) {
+    const { data: t } = await supabase.from('tiers').select('nome').eq('slug', profile.tier_slug).single();
+    plano = escapeHtml(t?.nome || profile.tier_slug);
+  }
+
+  root.innerHTML = `
+    <div class="mx-auto max-w-2xl">
+      <p class="decor text-2xl sm:text-3xl">que bom te ver</p>
+      <h1 class="mt-1 font-titulo text-3xl sm:text-4xl">oi, ${nome}</h1>
+
+      <dl class="mt-8 grid gap-4 sm:grid-cols-3">
+        <div class="rounded-2xl bg-branco/60 p-4 ring-1 ring-cafe/10">
+          <dt class="text-xs uppercase tracking-wide text-cafe/50">teus pontos</dt>
+          <dd class="mt-1 font-titulo text-2xl text-terracota">${pontos}</dd>
+        </div>
+        <div class="rounded-2xl bg-branco/60 p-4 ring-1 ring-cafe/10">
+          <dt class="text-xs uppercase tracking-wide text-cafe/50">teu plano</dt>
+          <dd class="mt-1 font-titulo text-lg">${plano}</dd>
+        </div>
+        <div class="rounded-2xl bg-branco/60 p-4 ring-1 ring-cafe/10">
+          <dt class="text-xs uppercase tracking-wide text-cafe/50">e-mail</dt>
+          <dd class="mt-1 truncate text-sm text-cafe" title="${email}">${email}</dd>
+        </div>
+      </dl>
+
+      <form class="mt-10" data-perfil-form novalidate>
+        <h2 class="font-titulo text-xl">teus dados</h2>
+        <p class="mt-1 text-sm text-cafe/60">atualiza quando quiser — é só teu.</p>
+
+        <div class="mt-5">
+          <label for="perfil-nome" class="block text-sm font-medium text-cafe">nome</label>
+          <input id="perfil-nome" name="nome" type="text" value="${nome}" autocomplete="name"
+            class="mt-1 w-full rounded-xl border border-cafe/20 bg-branco/70 px-4 py-2.5 text-cafe focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-terracota" />
+        </div>
+
+        <div class="mt-4">
+          <label for="perfil-telefone" class="block text-sm font-medium text-cafe">telefone</label>
+          <input id="perfil-telefone" name="telefone" type="tel" value="${telefone}" autocomplete="tel"
+            class="mt-1 w-full rounded-xl border border-cafe/20 bg-branco/70 px-4 py-2.5 text-cafe focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-terracota" />
+        </div>
+
+        <p class="mt-3 hidden text-sm" data-perfil-msg aria-live="polite"></p>
+        <button type="submit" class="btn-primary mt-5">salvar</button>
+      </form>
+
+      <div class="mt-10 border-t border-cafe/10 pt-6">
+        <button type="button" data-signout class="btn-ghost">
+          <i data-lucide="log-out" class="h-4 w-4"></i>sair da conta
+        </button>
+      </div>
+    </div>`;
+
+  renderIcons();
+
+  // Editar nome/telefone — update na PRÓPRIA linha (RLS garante id = auth.uid()).
+  const perfilForm = root.querySelector('[data-perfil-form]');
+  const msg = root.querySelector('[data-perfil-msg]');
+  const salvarBtn = perfilForm?.querySelector('[type="submit"]');
+  perfilForm?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (msg) msg.classList.add('hidden');
+    const novoNome = perfilForm.nome.value.trim();
+    const novoTel = perfilForm.telefone.value.trim();
+    if (!novoNome) {
+      if (msg) {
+        msg.textContent = 'conta pra gente teu nome? 💛';
+        msg.className = 'mt-3 text-sm text-terracota';
+        msg.classList.remove('hidden');
+      }
+      return;
+    }
+    const textoBtn = salvarBtn?.textContent;
+    if (salvarBtn) {
+      salvarBtn.disabled = true;
+      salvarBtn.textContent = 'salvando…';
+    }
+    try {
+      // Fonte da verdade dos dados: profiles (RLS: só a própria linha).
+      const { error } = await supabase
+        .from('profiles')
+        .update({ full_name: novoNome, telefone: novoTel })
+        .eq('id', session.user.id);
+      if (!error) {
+        // Espelha no metadata do auth (é o que o header usa pra mostrar o nome).
+        await supabase.auth.updateUser({ data: { full_name: novoNome, telefone: novoTel } });
+      }
+      if (msg) {
+        if (error) {
+          msg.textContent = 'não deu pra salvar agora. tenta de novo daqui a pouco?';
+          msg.className = 'mt-3 text-sm text-terracota';
+        } else {
+          msg.textContent = 'prontinho, teus dados foram salvos. 💛';
+          msg.className = 'mt-3 text-sm text-verde';
+          updateAuthUI(await getSession()); // reflete o nome novo no header
+        }
+        msg.classList.remove('hidden');
+      }
+    } finally {
+      if (salvarBtn) {
+        salvarBtn.disabled = false;
+        salvarBtn.textContent = textoBtn;
+      }
+    }
+  });
+
+  root.querySelector('[data-signout]')?.addEventListener('click', doSignOut);
+}
+
 // Configura os carrosséis do tipo "cards" (home e colab) + o hero (home).
 function initCarousels() {
   const hero = document.querySelector('[data-carousel="hero"] [data-carousel-track]');
@@ -1033,10 +1471,14 @@ function initCarousels() {
 export function initSite() {
   renderHeader();
   renderFooter();
+  initAuth(); // header reflete a sessão + reage a login/logout (todas as páginas)
   initCart(); // drawer + badge (todas as páginas)
   initCatalogPage(); // só age se houver [data-catalog-grid]
   initProductPage(); // só age se houver [data-product-root]
   initPlanosPage(); // só age se houver [data-assinar]
+  initCadastroPage(); // só age se houver [data-cadastro-form]
+  initLoginPage(); // só age se houver [data-login-form]
+  initPerfilPage(); // só age se houver [data-perfil-root] (protege a rota)
   initCarousels(); // só age se houver [data-carousel]
   renderIcons(); // ícones do header/footer + conteúdo estático restante
 }
