@@ -85,6 +85,45 @@ Redes (placeholders por enquanto): Instagram, Facebook, Spotify.
 
 ---
 
+## Imagens / fotos reais (TODO)
+
+Ainda **não temos fotos**. Todas as imagens são **placeholders de gradiente** com as
+cores da marca, via utilitários no `styles.css`:
+
+- `.photo-warm` — gradiente terracota→caramelo→café (quente).
+- `.photo-green` — gradiente verde→café.
+- `.photo-bege` — gradiente bege→caramelo (claro).
+
+> **TODO (trocar por fotos reais):** substituir os `div.photo-*` por `<img>`/`background-image`
+> reais quando as fotos chegarem. Onde entram fotos hoje (na `home.html`):
+> - **Hero** — 3 slides (fundo full-bleed de cada `article.carousel-slide`).
+> - **Feito no Casa** — 4 cards de cardápio (topo de cada card, `aspect-[4/3]`).
+> - **Gente do Casa** — 3 cards de colab (faixa lateral de cada card).
+> - **A loja do Casa** — 4 cards de produto (`aspect-square`).
+> - **Playlists** — o card placeholder vira o embed real do Spotify (`<iframe>`, já
+>   comentado no HTML).
+> As classes `.photo-*` podem permanecer como fallback/skeleton.
+
+---
+
+## Ícones
+
+- **Lucide** via módulo `lucide` (sem CDN). Uso: `<i data-lucide="nome"></i>` no HTML;
+  `renderIcons()` no `app.js` chama `createIcons()` e substitui por SVG **após** injetar markup.
+- Importar só os ícones usados (tree-shaking) no topo do `app.js` e registrar em `LUCIDE_ICONS`.
+
+---
+
+## Carrossel
+
+- Função única `setupCarousel(trackEl, { dots, autoplay, interval })` no `app.js` — serve os 3 tracks.
+- Base em **scroll-snap** horizontal (`.carousel-track`), navegável por swipe/scroll, teclado (setas) e dots.
+- **Autoplay** (só no hero) respeita `prefers-reduced-motion` e pausa em hover/foco/toque.
+- Contrato de DOM: `[data-carousel]` › `[data-carousel-track]` (+ opcionais `[data-dots]`,
+  `[data-carousel-prev]`, `[data-carousel-next]`).
+
+---
+
 ## Responsividade
 
 - **Mobile-first**, funcionando desde **~320px** (Galaxy Pocket) até **ultrawide (2560px+)**.
