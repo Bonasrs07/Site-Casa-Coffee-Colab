@@ -46,11 +46,24 @@ const SECRET_PATTERNS = [
   { re: /\brk_live_[0-9a-zA-Z]{10,}/, nome: 'Stripe restricted key (rk_live_)' },
   { re: /\bwhsec_[0-9a-zA-Z]{10,}/, nome: 'Stripe webhook secret (whsec_)' },
   { re: /\bAKIA[0-9A-Z]{16}\b/, nome: 'AWS access key id' },
-  // JWT com role service_role embutida (service_role key do Supabase)
-  { re: /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/, nome: 'JWT (possível service_role key)' },
   // Atribuição explícita de segredo em código
   { re: /(SERVICE_ROLE_KEY|STRIPE_SECRET_KEY|STRIPE_WEBHOOK_SECRET|POS_WEBHOOK_SECRET)\s*[:=]\s*['"][^'"]+['"]/, nome: 'segredo atribuído literal' },
 ];
+
+// JWTs do Supabase são todos "eyJ...". A ANON key é PÚBLICA e PODE ir pro bundle
+// do client (a RLS é quem protege). Já a SERVICE_ROLE key jamais pode vazar.
+// Então: decodifica o payload e só reprova se a role NÃO for anon/authenticated.
+const JWT_RE = /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}/g;
+function papelDoJwt(token) {
+  try {
+    const payload = token.split('.')[1];
+    const json = Buffer.from(payload.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+    return JSON.parse(json).role ?? null;
+  } catch {
+    return null;
+  }
+}
+
 const scanDirs = [join(ROOT, 'src'), join(ROOT, 'dist')];
 let segredoAchado = false;
 for (const dir of scanDirs) {
@@ -63,9 +76,16 @@ for (const dir of scanDirs) {
         fail(`segredo (${nome}) em ${relative(ROOT, file)}`);
       }
     }
+    // JWTs: anon/authenticated OK; qualquer outra role (ex.: service_role) reprova.
+    for (const m of txt.matchAll(JWT_RE)) {
+      const papel = papelDoJwt(m[0]);
+      if (papel === 'anon' || papel === 'authenticated') continue;
+      segredoAchado = true;
+      fail(`JWT com role "${papel || 'indecifrável'}" em ${relative(ROOT, file)} (só a anon key pode ir pro client)`);
+    }
   }
 }
-if (!segredoAchado) ok('nenhum padrão de chave secreta em src/dist');
+if (!segredoAchado) ok('nenhum segredo em src/dist (anon key é permitida; service_role reprova)');
 if (!existsSync(join(ROOT, 'dist'))) console.log('    (dist/ ausente — rode "npm run build" pra escanear o bundle também)');
 
 // =============================================================================
