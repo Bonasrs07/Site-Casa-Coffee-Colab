@@ -1,0 +1,71 @@
+/* Fontes bundled via @fontsource (sem CDN). Placeholders até termos
+   Rexton/Mayonice — ver TODO no CLAUDE.md. */
+@import '@fontsource/sora/300.css';
+@import '@fontsource/sora/400.css';
+@import '@fontsource/sora/500.css';
+@import '@fontsource/sora/600.css';
+@import '@fontsource/sora/700.css';
+@import '@fontsource/fraunces/400.css';
+@import '@fontsource/fraunces/500.css';
+@import '@fontsource/fraunces/600.css';
+@import '@fontsource/fraunces/700.css';
+@import '@fontsource/caveat/400.css';
+@import '@fontsource/caveat/600.css';
+@import '@fontsource/caveat/700.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-bege text-cafe font-sora antialiased;
+  }
+
+  h1, h2, h3, h4 {
+    @apply font-titulo text-cafe;
+  }
+
+  /* Foco visível e acessível em toda a UI */
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-terracota;
+  }
+}
+
+@layer components {
+  /* Botão primário — tom acolhedor, cantos suaves */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-full
+           bg-terracota px-5 py-2.5 text-sm font-medium text-bege
+           transition-colors duration-200 hover:bg-cafe
+           focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-terracota;
+  }
+
+  /* Traço manuscrito decorativo */
+  .decor {
+    @apply font-decor text-caramelo;
+  }
+}
+
+/* Sempre respeitar quem pediu menos movimento */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
