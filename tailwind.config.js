@@ -24,6 +24,8 @@ export default {
         cafe: '#5b3c34',
         caramelo: '#a56a3a',
         bege: '#ead8c1',
+        preto: '#000000',
+        branco: '#ffffff',
       },
       fontFamily: {
         // Sora = texto/UI. titulo/decor usam placeholders (Fraunces/Caveat)

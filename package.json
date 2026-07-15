@@ -20,6 +20,7 @@
   "dependencies": {
     "@fontsource/caveat": "^5.2.8",
     "@fontsource/fraunces": "^5.2.9",
-    "@fontsource/sora": "^5.2.8"
+    "@fontsource/sora": "^5.2.8",
+    "lucide": "^1.24.0"
   }
 }
