@@ -124,6 +124,27 @@ cores da marca, via utilitários no `styles.css`:
 
 ---
 
+## Loja (catálogo, produto, carrinho)
+
+- **Catálogo (mock)**: array `PRODUTOS` no `app.js` (bloco "CATÁLOGO (MOCK …)"). Cada item:
+  `id, nome, slug, categoria (vestuario|acessorios|cafe_grao), preco_centavos, descricao,
+  imagemPlaceholder (.photo-*), variantes ({ rotulo, opcoes[] } | null)`.
+  > **TODO (Fase 2):** substituir o mock pela tabela **`products` do Supabase** (mesma forma).
+- **Páginas**: `src/pages/loja.html` (grid + filtro por categoria) e
+  `src/pages/produto.html` (lê `?slug=`, renderiza detalhe; estado vazio gentil se não achar).
+  Ambas registradas no `rollupOptions.input` do `vite.config.js`.
+- **Carrinho** (`Cart` no `app.js`): estado em **localStorage** (chave `casa_cart`) — o site é
+  multi-página, então o carrinho **sobrevive a reloads/navegação**. API:
+  `addItem/removeItem/updateQty/getCart/getSubtotalCentavos/getCount/clearCart/onChange`.
+  Sincroniza entre abas via evento `storage`.
+- **Drawer**: painel lateral reutilizável, injetado uma vez no `<body>`; abre pelo ícone
+  `shopping-bag` do header (com badge de contagem). Fecha por X, Esc e clique no backdrop.
+  Botão "finalizar compra" é **placeholder** — o **checkout via Stripe vem na Fase 2**.
+- **Preços**: sempre cheios, via `formatBRL(centavos)` (ex.: `R$ 49,90`). O **desconto por tier
+  de assinatura NÃO é aplicado aqui** — ele entra no checkout (Fase 2).
+
+---
+
 ## Responsividade
 
 - **Mobile-first**, funcionando desde **~320px** (Galaxy Pocket) até **ultrawide (2560px+)**.
