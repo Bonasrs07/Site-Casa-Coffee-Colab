@@ -8,6 +8,22 @@
 // =============================================================================
 
 import './styles.css';
+import {
+  createIcons,
+  Coffee,
+  Sunrise,
+  ArrowRight,
+  ChevronLeft,
+  ChevronRight,
+  Music,
+} from 'lucide';
+
+// Ícones Lucide usados no site. createIcons() substitui <i data-lucide="..."> por SVG.
+// Chamar sempre DEPOIS de injetar markup novo no DOM.
+const LUCIDE_ICONS = { Coffee, Sunrise, ArrowRight, ChevronLeft, ChevronRight, Music };
+function renderIcons() {
+  createIcons({ icons: LUCIDE_ICONS });
+}
 
 // --- Dados da marca (fonte única) ----------------------------------------------
 const MARCA = {
@@ -28,14 +44,15 @@ const MARCA = {
   ],
 };
 
-// Navegação principal. `href` aponta pra cada página (uma URL cada).
+// Navegação principal. Por ora aponta pra âncoras de seções da home.
+// TODO (próximas levas): repointar pras páginas reais (/pages/o-casa.html, etc.).
 const NAV = [
-  { rotulo: 'Home', href: '/home.html' },
-  { rotulo: 'O Casa', href: '/o-casa.html' },
-  { rotulo: 'Cardápio', href: '/cardapio.html' },
-  { rotulo: 'Loja', href: '/loja.html' },
-  { rotulo: 'Planos', href: '/planos.html' },
-  { rotulo: 'Colab', href: '/colab.html' },
+  { rotulo: 'Home', href: '#topo' },
+  { rotulo: 'O Casa', href: '#hero' },
+  { rotulo: 'Cardápio', href: '#feito-no-casa' },
+  { rotulo: 'Loja', href: '#loja' },
+  { rotulo: 'Planos', href: '#planos' },
+  { rotulo: 'Colab', href: '#gente-do-casa' },
 ];
 
 // --- Header --------------------------------------------------------------------
@@ -57,7 +74,7 @@ function renderHeader() {
     <header id="topo" class="sticky top-0 z-50 transition-colors duration-300" data-site-header>
       <div class="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6 3xl:max-w-[1600px]">
         <!-- Logo -->
-        <a href="/home.html" class="flex items-center gap-2 shrink-0">
+        <a href="#topo" class="flex items-center gap-2 shrink-0">
           <span class="font-titulo text-lg font-semibold text-terracota sm:text-xl">Casa Coffee Colab</span>
         </a>
 
@@ -67,7 +84,7 @@ function renderHeader() {
         </nav>
 
         <!-- CTA desktop -->
-        <a href="#" class="btn-primary hidden lg:inline-flex">${MARCA.cta}</a>
+        <a href="#feito-no-casa" class="btn-primary hidden lg:inline-flex">${MARCA.cta}</a>
 
         <!-- Botão hambúrguer (mobile) -->
         <button
@@ -93,7 +110,7 @@ function renderHeader() {
       >
         <nav class="mx-auto max-w-7xl px-4 py-4 sm:px-6" aria-label="Navegação mobile">
           ${linksMobile}
-          <a href="#" class="btn-primary mt-4 w-full" data-menu-link>${MARCA.cta}</a>
+          <a href="#feito-no-casa" class="btn-primary mt-4 w-full" data-menu-link>${MARCA.cta}</a>
         </nav>
       </div>
     </header>
@@ -214,10 +231,172 @@ function renderFooter() {
   `;
 }
 
+// =============================================================================
+// Carrossel reutilizável (scroll-snap) — serve pros 3 tracks da home.
+//
+// Contrato de DOM:
+//   <div data-carousel="hero|cards">
+//     <div data-carousel-track class="carousel-track">…slides…</div>
+//     <div data-dots></div>                 (opcional — bolinhas)
+//     <button data-carousel-prev>…</button> (opcional — desktop)
+//     <button data-carousel-next>…</button> (opcional — desktop)
+//   </div>
+//
+// setupCarousel(trackEl, { dots, autoplay, interval })
+//   - autoplay só roda se NÃO for prefers-reduced-motion; pausa em hover/foco/toque.
+//   - dots clicáveis refletem o slide atual (usado só no hero).
+//   - navegável por teclado (setas) e por swipe/scroll no mobile.
+// =============================================================================
+function setupCarousel(trackEl, { dots = false, autoplay = false, interval = 5500 } = {}) {
+  if (!trackEl) return;
+  const slides = Array.from(trackEl.children);
+  if (slides.length === 0) return;
+
+  const root = trackEl.closest('[data-carousel]') || trackEl.parentElement;
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // Torna o track acessível/foca­vel pra navegação por teclado
+  if (!trackEl.hasAttribute('tabindex')) trackEl.setAttribute('tabindex', '0');
+  if (!trackEl.hasAttribute('role')) trackEl.setAttribute('role', 'region');
+  if (!trackEl.hasAttribute('aria-label')) trackEl.setAttribute('aria-label', 'Carrossel');
+
+  // Posição (à esquerda) de cada slide, relativa ao primeiro
+  const slideLeft = (i) => slides[i].offsetLeft - slides[0].offsetLeft;
+  const currentIndex = () => {
+    const x = trackEl.scrollLeft;
+    let best = 0;
+    let bestDist = Infinity;
+    slides.forEach((_, i) => {
+      const d = Math.abs(slideLeft(i) - x);
+      if (d < bestDist) {
+        bestDist = d;
+        best = i;
+      }
+    });
+    return best;
+  };
+  const goTo = (i) => {
+    const idx = (i + slides.length) % slides.length;
+    trackEl.scrollTo({ left: slideLeft(idx), behavior: reduceMotion ? 'auto' : 'smooth' });
+  };
+
+  // --- Dots -----------------------------------------------------------------
+  let dotEls = [];
+  const dotsWrap = dots ? root?.querySelector('[data-dots]') : null;
+  if (dotsWrap) {
+    dotsWrap.innerHTML = slides
+      .map(
+        (_, i) =>
+          `<button type="button" class="dot" data-dot="${i}" aria-label="Ir para o slide ${i + 1}"></button>`
+      )
+      .join('');
+    dotEls = Array.from(dotsWrap.querySelectorAll('[data-dot]'));
+    dotEls.forEach((d, i) =>
+      d.addEventListener('click', () => {
+        goTo(i);
+        restart();
+      })
+    );
+  }
+
+  const syncUI = () => {
+    const cur = currentIndex();
+    dotEls.forEach((d, i) =>
+      d.setAttribute('aria-current', i === cur ? 'true' : 'false')
+    );
+  };
+
+  // --- Autoplay -------------------------------------------------------------
+  let timer = null;
+  const canAuto = autoplay && !reduceMotion && slides.length > 1;
+  const stop = () => {
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
+  };
+  const start = () => {
+    if (canAuto && !timer && !document.hidden) {
+      timer = setInterval(() => goTo(currentIndex() + 1), interval);
+    }
+  };
+  const restart = () => {
+    stop();
+    start();
+  };
+
+  if (canAuto) {
+    // Pausa em hover, foco e toque; retoma depois
+    root.addEventListener('mouseenter', stop);
+    root.addEventListener('mouseleave', start);
+    root.addEventListener('focusin', stop);
+    root.addEventListener('focusout', start);
+    root.addEventListener('pointerdown', stop);
+    root.addEventListener('pointerup', restart);
+    root.addEventListener('touchstart', stop, { passive: true });
+    root.addEventListener('touchend', restart, { passive: true });
+    document.addEventListener('visibilitychange', () => (document.hidden ? stop() : start()));
+  }
+
+  // --- Botões prev/next (opcionais) -----------------------------------------
+  root?.querySelector('[data-carousel-prev]')?.addEventListener('click', () => {
+    goTo(currentIndex() - 1);
+    restart();
+  });
+  root?.querySelector('[data-carousel-next]')?.addEventListener('click', () => {
+    goTo(currentIndex() + 1);
+    restart();
+  });
+
+  // --- Teclado --------------------------------------------------------------
+  trackEl.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      goTo(currentIndex() + 1);
+      restart();
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      goTo(currentIndex() - 1);
+      restart();
+    }
+  });
+
+  // --- Sincroniza dots ao rolar (throttle com rAF) --------------------------
+  let ticking = false;
+  trackEl.addEventListener(
+    'scroll',
+    () => {
+      if (!ticking) {
+        ticking = true;
+        requestAnimationFrame(() => {
+          syncUI();
+          ticking = false;
+        });
+      }
+    },
+    { passive: true }
+  );
+
+  syncUI();
+  start();
+}
+
+// Configura os 3 carrosséis da home (se existirem na página).
+function initCarousels() {
+  const hero = document.querySelector('[data-carousel="hero"] [data-carousel-track]');
+  if (hero) setupCarousel(hero, { dots: true, autoplay: true, interval: 5500 });
+
+  document
+    .querySelectorAll('[data-carousel="cards"] [data-carousel-track]')
+    .forEach((track) => setupCarousel(track, { dots: false, autoplay: false }));
+}
+
 // --- Bootstrap -----------------------------------------------------------------
 export function initSite() {
   renderHeader();
   renderFooter();
+  initCarousels();
+  renderIcons(); // ícones do header/footer + conteúdo estático + botões dos carrosséis
 }
 
 // Auto-inicializa quando o DOM estiver pronto
