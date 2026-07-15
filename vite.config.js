@@ -19,8 +19,12 @@ export default defineConfig({
     rollupOptions: {
       input: {
         home: resolve(root, 'pages/home.html'),
+        oCasa: resolve(root, 'pages/o-casa.html'),
+        cardapio: resolve(root, 'pages/cardapio.html'),
         loja: resolve(root, 'pages/loja.html'),
         produto: resolve(root, 'pages/produto.html'),
+        planos: resolve(root, 'pages/planos.html'),
+        colab: resolve(root, 'pages/colab.html'),
       },
     },
   },
