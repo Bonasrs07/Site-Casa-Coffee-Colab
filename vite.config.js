@@ -9,6 +9,9 @@ const root = resolve(__dirname, 'src');
 // src/pages/ entram aqui em `input` (uma URL cada).
 export default defineConfig({
   root,
+  // .env fica na RAIZ do projeto, mas o root do Vite é src/ — sem isto o Vite
+  // procuraria .env dentro de src/ e as VITE_* nunca seriam carregadas.
+  envDir: __dirname,
   publicDir: resolve(__dirname, 'src/assets'),
   server: {
     open: '/pages/home.html',
