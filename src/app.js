@@ -322,8 +322,8 @@ function renderHeader() {
   }).join('');
 
   slot.innerHTML = `
-    <header id="topo" class="sticky top-0 z-50 transition-colors duration-300" data-site-header>
-      <div class="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6 3xl:max-w-[1600px]">
+    <header id="topo" class="fixed inset-x-0 top-0 z-50 transition-colors duration-300" data-site-header>
+      <div class="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6 md:h-20 3xl:max-w-[1600px]">
         <!-- Logo -->
         <a href="#topo" class="flex items-center gap-2 shrink-0">
           <span class="font-titulo text-lg font-semibold text-terracota sm:text-xl">Casa Coffee Colab</span>

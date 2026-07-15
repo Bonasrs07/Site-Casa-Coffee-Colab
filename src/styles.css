@@ -28,6 +28,10 @@
 
   body {
     @apply bg-bege text-cafe font-sora antialiased;
+    /* Header é position: fixed (sai do fluxo) — compensamos o vão com um
+       padding-top igual à altura do header (h-16 no mobile / h-20 a partir de md).
+       Centralizado aqui pra valer em TODAS as páginas, sem repetir por arquivo. */
+    @apply pt-16 md:pt-20;
   }
 
   h1, h2, h3, h4 {
