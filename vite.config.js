@@ -40,6 +40,7 @@ export default defineConfig({
         perfil: resolve(root, 'pages/conta/perfil.html'),
         pontos: resolve(root, 'pages/conta/pontos.html'),
         conquistas: resolve(root, 'pages/conta/conquistas.html'),
+        pedidos: resolve(root, 'pages/conta/pedidos.html'),
       },
     },
   },

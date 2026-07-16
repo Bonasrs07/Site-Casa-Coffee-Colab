@@ -38,6 +38,8 @@ import {
   Check,
   ArrowLeft,
   Lock,
+  ChevronDown,
+  CreditCard,
 } from 'lucide';
 import { createClient } from '@supabase/supabase-js';
 
@@ -72,6 +74,8 @@ const LUCIDE_ICONS = {
   Check,
   ArrowLeft,
   Lock,
+  ChevronDown,
+  CreditCard,
 };
 function renderIcons() {
   createIcons({ icons: LUCIDE_ICONS });
@@ -1319,40 +1323,275 @@ async function doSignOut() {
 }
 
 // Preenche os slots de auth do header conforme a sessão (deslogado ↔ logado).
+// Logado (desktop) → painel do usuário "mini-game" (avatar + dropdown com anel de
+// progresso, saldo, emblemas e links). Mobile → lista compacta no drawer.
 function updateAuthUI(session) {
-  const nome = escapeHtml(nomeDeExibicao(session)); // sempre escapado (anti-XSS)
+  const raw = nomeDeExibicao(session) || '?';
+  const nome = escapeHtml(raw); // sempre escapado (anti-XSS)
+  const inicial = escapeHtml((raw.trim().charAt(0) || '?').toUpperCase());
 
   const slot = document.querySelector('[data-auth-slot]');
   if (slot) {
     slot.innerHTML = session
-      ? `<a href="/pages/conta/perfil.html" class="inline-flex items-center gap-2 text-sm font-medium text-cafe hover:text-terracota">
-           <span class="grid h-8 w-8 place-items-center rounded-full bg-terracota/10 text-terracota"><i data-lucide="user" class="h-4 w-4"></i></span>
-           <span class="max-w-[9rem] truncate">${nome}</span>
-         </a>
-         <button type="button" data-signout class="ml-3 inline-flex items-center gap-1 text-sm text-cafe/70 hover:text-terracota">
-           <i data-lucide="log-out" class="h-4 w-4"></i>sair
-         </button>`
+      ? authDesktopLogado(nome, inicial)
       : `<a href="/pages/login.html" class="btn-ghost">entrar</a>`;
   }
 
   const slotM = document.querySelector('[data-auth-slot-mobile]');
   if (slotM) {
     slotM.innerHTML = session
-      ? `<a href="/pages/conta/perfil.html" class="flex items-center gap-2 py-2 text-lg text-cafe" data-menu-link>
-           <i data-lucide="user" class="h-5 w-5"></i>${nome}
-         </a>
-         <a href="/pages/conta/conquistas.html" class="flex items-center gap-2 py-2 text-lg text-cafe" data-menu-link>
-           <i data-lucide="award" class="h-5 w-5"></i>minhas conquistas
-         </a>
-         <button type="button" data-signout class="mt-2 inline-flex items-center gap-2 text-cafe/70 hover:text-terracota">
-           <i data-lucide="log-out" class="h-5 w-5"></i>sair da conta
-         </button>`
+      ? authMobileLogado(nome)
       : `<a href="/pages/login.html" class="btn-ghost w-full" data-menu-link>entrar</a>`;
   }
 
-  // Liga o "sair" só nos botões do header (o perfil liga o seu próprio).
+  // Liga o "sair" dos botões do header (o painel liga o seu próprio ao renderizar).
   [slot, slotM].forEach((s) => s?.querySelector('[data-signout]')?.addEventListener('click', doSignOut));
+
+  if (session) {
+    // Trigger do painel (desktop).
+    slot?.querySelector('[data-user-panel-trigger]')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const panel = document.querySelector('[data-user-panel]');
+      panel?.dataset.aberto === 'true' ? closeUserPanel() : openUserPanel();
+    });
+    initUserPanelGlobal(); // fecha por Esc/clique-fora (uma vez só)
+    hydrateAuthSaldo();    // preenche o saldo no drawer mobile
+  }
   renderIcons();
+}
+
+// Markup do usuário logado no header desktop: botão-gatilho (avatar+nome) + painel.
+function authDesktopLogado(nome, inicial) {
+  return `
+    <div class="relative" data-user-panel-wrap>
+      <button type="button" data-user-panel-trigger aria-haspopup="true" aria-expanded="false"
+        class="inline-flex items-center gap-2 rounded-full py-1 pl-1 pr-2 text-sm font-medium text-cafe transition-colors hover:bg-cafe/5">
+        <span class="grid h-8 w-8 place-items-center rounded-full bg-terracota font-titulo text-bege">${inicial}</span>
+        <span class="max-w-[9rem] truncate">${nome}</span>
+        <i data-lucide="chevron-down" class="h-4 w-4 text-cafe/50"></i>
+      </button>
+      <div data-user-panel data-aberto="false" role="menu" aria-hidden="true"
+        class="invisible absolute right-0 top-full z-50 mt-2 w-80 origin-top-right scale-95 rounded-2xl bg-branco/95 p-5 opacity-0 shadow-xl ring-1 ring-cafe/10 backdrop-blur-md transition duration-200">
+        <p class="text-center text-sm text-cafe/50">só um instante…</p>
+      </div>
+    </div>`;
+}
+
+// Markup do usuário logado no drawer mobile: lista compacta (saldo + links).
+function authMobileLogado(nome) {
+  return `
+    <div class="flex items-center gap-2 py-1 text-lg text-cafe">
+      <span class="grid h-8 w-8 place-items-center rounded-full bg-terracota/10 text-terracota"><i data-lucide="user" class="h-4 w-4"></i></span>
+      <span class="truncate">${nome}</span>
+    </div>
+    <p class="pb-1 pl-10 text-sm text-cafe/60"><span data-auth-saldo>—</span> pontos</p>
+    <a href="/pages/conta/pontos.html" class="flex items-center gap-2 py-2 text-base text-cafe" data-menu-link><i data-lucide="gift" class="h-5 w-5 text-terracota"></i>meus pontos</a>
+    <a href="/pages/conta/conquistas.html" class="flex items-center gap-2 py-2 text-base text-cafe" data-menu-link><i data-lucide="award" class="h-5 w-5 text-terracota"></i>minhas conquistas</a>
+    <a href="/pages/conta/pedidos.html" class="flex items-center gap-2 py-2 text-base text-cafe" data-menu-link><i data-lucide="shopping-bag" class="h-5 w-5 text-terracota"></i>meus pedidos</a>
+    <a href="/pages/conta/perfil.html" class="flex items-center gap-2 py-2 text-base text-cafe" data-menu-link><i data-lucide="user" class="h-5 w-5 text-terracota"></i>minha conta</a>
+    <button type="button" data-signout class="mt-2 inline-flex items-center gap-2 text-cafe/70 hover:text-terracota">
+      <i data-lucide="log-out" class="h-5 w-5"></i>sair da conta
+    </button>`;
+}
+
+// Fecha o painel por Esc e por clique fora — ligado UMA vez (evita empilhar
+// listeners a cada updateAuthUI). Consulta o painel vivo no momento do evento.
+let userPanelGlobalWired = false;
+function initUserPanelGlobal() {
+  if (userPanelGlobalWired) return;
+  userPanelGlobalWired = true;
+  document.addEventListener('click', (e) => {
+    const wrap = document.querySelector('[data-user-panel-wrap]');
+    const panel = wrap?.querySelector('[data-user-panel]');
+    if (!wrap || !panel || panel.dataset.aberto !== 'true') return;
+    if (!wrap.contains(e.target)) closeUserPanel();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const panel = document.querySelector('[data-user-panel]');
+    if (panel?.dataset.aberto === 'true') {
+      closeUserPanel();
+      document.querySelector('[data-user-panel-trigger]')?.focus();
+    }
+  });
+}
+
+function openUserPanel() {
+  const panel = document.querySelector('[data-user-panel]');
+  const trigger = document.querySelector('[data-user-panel-trigger]');
+  if (!panel) return;
+  panel.dataset.aberto = 'true';
+  trigger?.setAttribute('aria-expanded', 'true');
+  panel.setAttribute('aria-hidden', 'false');
+  panel.classList.remove('invisible', 'scale-95', 'opacity-0');
+  panel.classList.add('scale-100', 'opacity-100');
+  if (panel.dataset.carregado !== 'true') {
+    panel.dataset.carregado = 'true';
+    renderUserPanel(panel);
+  }
+}
+
+function closeUserPanel() {
+  const panel = document.querySelector('[data-user-panel]');
+  const trigger = document.querySelector('[data-user-panel-trigger]');
+  if (!panel) return;
+  panel.dataset.aberto = 'false';
+  trigger?.setAttribute('aria-expanded', 'false');
+  panel.setAttribute('aria-hidden', 'true');
+  panel.classList.add('scale-95', 'opacity-0');
+  panel.classList.remove('scale-100', 'opacity-100');
+  // Some da árvore de foco só depois da transição de saída.
+  setTimeout(() => {
+    if (panel.dataset.aberto !== 'true') panel.classList.add('invisible');
+  }, 200);
+}
+
+// Preenche o painel com dados frescos: anel (pontos → próxima recompensa),
+// saldo (count-up), emblemas e links. Tudo do banco é escapado antes do DOM.
+async function renderUserPanel(panel) {
+  if (!supabase) {
+    panel.innerHTML = `<p class="text-center text-sm text-cafe/60">tua conta ainda não está ligada por aqui (config pendente).</p>`;
+    return;
+  }
+  const session = await getSession();
+  if (!session) return;
+  const profile = await getProfile();
+  const saldo = Number(profile?.points_balance || 0);
+
+  const [tierRes, rewardsRes, achRes, uachRes] = await Promise.all([
+    profile?.tier_slug
+      ? supabase.from('tiers').select('nome').eq('slug', profile.tier_slug).maybeSingle()
+      : Promise.resolve({ data: null }),
+    supabase.from('rewards_catalog').select('nome, custo_em_pontos, ativo, estoque').eq('ativo', true).order('custo_em_pontos', { ascending: true }),
+    supabase.from('achievements').select('slug, nome, icone, ordem').eq('ativo', true).order('ordem', { ascending: true }),
+    supabase.from('user_achievements').select('achievement_slug').eq('user_id', session.user.id),
+  ]);
+
+  const planoNome = tierRes.data?.nome || (profile?.tier_slug ? profile.tier_slug : null);
+  const rewards = (rewardsRes.data || []).filter((r) => r.estoque === null || Number(r.estoque) > 0);
+  const proximo = rewards.find((r) => Number(r.custo_em_pontos) > saldo);
+
+  // Anel: pontos → próxima recompensa acessível.
+  let percent;
+  let faltamTxt;
+  if (!rewards.length) {
+    percent = 0;
+    faltamTxt = 'junta pontos e troca por agrados quando quiser';
+  } else if (!proximo) {
+    percent = 1;
+    faltamTxt = 'teus pontos já dão pra qualquer agrado 💛';
+  } else {
+    const custo = Number(proximo.custo_em_pontos);
+    percent = custo > 0 ? Math.min(saldo / custo, 1) : 0;
+    const faltam = custo - saldo;
+    faltamTxt = saldo <= 0
+      ? `faltam ${faltam.toLocaleString('pt-BR')} pontos pro teu primeiro agrado`
+      : `faltam ${faltam.toLocaleString('pt-BR')} pontos pro ${escapeHtml(proximo.nome)}`;
+  }
+
+  const desbloq = new Set((uachRes.data || []).map((u) => u.achievement_slug));
+  const emblemas = (achRes.data || [])
+    .slice(0, 8)
+    .map((a) => {
+      const icone = iconeConquista(a.icone);
+      const on = desbloq.has(a.slug);
+      return on
+        ? `<span title="${escapeHtml(a.nome)}" class="grid h-9 w-9 place-items-center rounded-full bg-terracota/10 text-terracota"><i data-lucide="${icone}" class="h-4 w-4"></i></span>`
+        : `<span title="${escapeHtml(a.nome)}" class="grid h-9 w-9 place-items-center rounded-full bg-cafe/5 text-cafe/30"><i data-lucide="lock" class="h-4 w-4"></i></span>`;
+    })
+    .join('');
+
+  const R = 34;
+  const C = 2 * Math.PI * R;
+  const alvoOffset = C * (1 - percent);
+
+  panel.innerHTML = `
+    <div class="flex items-center gap-3">
+      <div class="relative h-20 w-20 shrink-0">
+        <svg viewBox="0 0 80 80" class="h-20 w-20 -rotate-90">
+          <circle cx="40" cy="40" r="${R}" fill="none" stroke="currentColor" stroke-width="6" class="text-cafe/10" />
+          <circle data-ring cx="40" cy="40" r="${R}" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round"
+            class="text-terracota" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${C.toFixed(1)}"
+            style="transition: stroke-dashoffset 1.2s cubic-bezier(0.22, 1, 0.36, 1);" />
+        </svg>
+        <span class="absolute inset-0 grid place-items-center font-titulo text-lg text-terracota" data-saldo-anim>0</span>
+      </div>
+      <div class="min-w-0">
+        <p class="font-titulo text-lg leading-tight">${planoNome ? escapeHtml(planoNome) : 'sem plano ainda'}</p>
+        <p class="mt-0.5 text-sm text-cafe/70">${faltamTxt}</p>
+      </div>
+    </div>
+
+    ${emblemas ? `<div class="mt-4 flex flex-wrap gap-2">${emblemas}</div>` : ''}
+
+    <div class="mt-4 grid gap-0.5 border-t border-cafe/10 pt-3 text-sm">
+      <a href="/pages/conta/pontos.html" class="flex items-center gap-2 rounded-lg px-2 py-2 text-cafe transition-colors hover:bg-cafe/5"><i data-lucide="gift" class="h-4 w-4 text-terracota"></i>meus pontos</a>
+      <a href="/pages/conta/conquistas.html" class="flex items-center gap-2 rounded-lg px-2 py-2 text-cafe transition-colors hover:bg-cafe/5"><i data-lucide="award" class="h-4 w-4 text-terracota"></i>minhas conquistas</a>
+      <a href="/pages/conta/pedidos.html" class="flex items-center gap-2 rounded-lg px-2 py-2 text-cafe transition-colors hover:bg-cafe/5"><i data-lucide="shopping-bag" class="h-4 w-4 text-terracota"></i>meus pedidos</a>
+      ${
+        planoNome
+          ? `<button type="button" data-panel-assinatura class="flex items-center gap-2 rounded-lg px-2 py-2 text-left text-cafe transition-colors hover:bg-cafe/5"><i data-lucide="credit-card" class="h-4 w-4 text-terracota"></i>minha assinatura</button>`
+          : `<a href="/pages/planos.html" class="flex items-center gap-2 rounded-lg px-2 py-2 text-cafe transition-colors hover:bg-cafe/5"><i data-lucide="credit-card" class="h-4 w-4 text-terracota"></i>conhecer os planos</a>`
+      }
+      <button type="button" data-signout class="mt-1 flex items-center gap-2 rounded-lg px-2 py-2 text-left text-cafe/70 transition-colors hover:bg-cafe/5 hover:text-terracota"><i data-lucide="log-out" class="h-4 w-4"></i>sair da conta</button>
+    </div>`;
+
+  renderIcons();
+
+  // Anima o anel + count-up do saldo. Respeita prefers-reduced-motion (estado final direto).
+  const ring = panel.querySelector('[data-ring]');
+  const saldoEl = panel.querySelector('[data-saldo-anim]');
+  const reduz = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduz) {
+    if (ring) ring.style.strokeDashoffset = alvoOffset.toFixed(1);
+    if (saldoEl) saldoEl.textContent = saldo.toLocaleString('pt-BR');
+  } else {
+    requestAnimationFrame(() => {
+      if (ring) ring.style.strokeDashoffset = alvoOffset.toFixed(1);
+    });
+    animarContagem(saldoEl, saldo, 900);
+  }
+
+  panel.querySelector('[data-signout]')?.addEventListener('click', doSignOut);
+  panel.querySelector('[data-panel-assinatura]')?.addEventListener('click', abrirBillingPortal);
+}
+
+// Count-up (easeOutCubic) do 0 até o alvo. Usado no saldo do painel.
+function animarContagem(el, alvo, dur = 900) {
+  if (!el) return;
+  const inicio = performance.now();
+  const passo = (t) => {
+    const p = Math.min((t - inicio) / dur, 1);
+    const eased = 1 - Math.pow(1 - p, 3);
+    el.textContent = Math.round(alvo * eased).toLocaleString('pt-BR');
+    if (p < 1) requestAnimationFrame(passo);
+  };
+  requestAnimationFrame(passo);
+}
+
+// Abre o Billing Portal do Stripe (create-portal-session). Reusa a Edge Function
+// da 6b. Falhou? volta pro perfil (onde dá pra tentar de novo com aviso).
+async function abrirBillingPortal() {
+  if (!supabase) return;
+  try {
+    const { data, error } = await supabase.functions.invoke('create-portal-session', { body: {} });
+    if (!error && data?.url) {
+      window.location.href = data.url;
+      return;
+    }
+  } catch {
+    /* cai no fallback abaixo */
+  }
+  window.location.href = '/pages/conta/perfil.html';
+}
+
+// Preenche o saldo nos slots [data-auth-saldo] (drawer mobile). Uma leitura leve.
+async function hydrateAuthSaldo() {
+  const els = document.querySelectorAll('[data-auth-saldo]');
+  if (!els.length || !supabase) return;
+  const profile = await getProfile();
+  const saldo = Number(profile?.points_balance || 0).toLocaleString('pt-BR');
+  els.forEach((el) => (el.textContent = saldo));
 }
 
 // Header reflete o estado de auth e reage a login/logout (inclusive entre abas).
@@ -2044,6 +2283,165 @@ async function initConquistasPage() {
   renderIcons();
 }
 
+// --- Meus pedidos (área logada) ------------------------------------------------
+// Lista os pedidos do PRÓPRIO usuário (RLS: user_id = auth.uid()) com itens e
+// status. order_items vem embutido pela FK (PostgREST). Tudo do banco é escapado.
+const STATUS_PEDIDO_LABEL = {
+  pendente: 'aguardando pagamento',
+  pago: 'pago',
+  preparando: 'preparando',
+  pronto: 'pronto',
+  entregue: 'entregue',
+  cancelado: 'cancelado',
+};
+
+async function initPedidosPage() {
+  const root = document.querySelector('[data-pedidos-root]');
+  if (!root) return;
+
+  const session = await requireAuth();
+  if (!session) return; // já redirecionou pro login
+
+  if (!supabase) {
+    root.innerHTML = `<p class="text-center text-cafe/60">os pedidos ainda não estão ligados por aqui (config pendente).</p>`;
+    return;
+  }
+
+  const { data: pedidos } = await supabase
+    .from('orders')
+    .select('id, status, total_centavos, created_at, order_items ( nome_snapshot, variante_snapshot, qtd, preco_unit_centavos )')
+    .eq('user_id', session.user.id)
+    .order('created_at', { ascending: false });
+
+  const lista = (pedidos || []).length
+    ? pedidos
+        .map((p) => {
+          const itens = (p.order_items || [])
+            .map((it) => {
+              const nome = escapeHtml(it.nome_snapshot || 'item');
+              const variante = it.variante_snapshot ? ` · ${escapeHtml(it.variante_snapshot)}` : '';
+              const qtd = Number(it.qtd || 1);
+              return `<li class="flex justify-between gap-3 text-sm text-cafe/75">
+                  <span class="min-w-0 truncate">${nome}${variante} <span class="text-cafe/50">×${qtd}</span></span>
+                  <span class="shrink-0">${formatBRL(Number(it.preco_unit_centavos || 0) * qtd)}</span>
+                </li>`;
+            })
+            .join('');
+          const statusTxt = escapeHtml(STATUS_PEDIDO_LABEL[p.status] || p.status || '');
+          return `
+            <article class="rounded-2xl bg-branco/60 p-5 ring-1 ring-cafe/10">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <p class="text-sm text-cafe/60">${formatarDataCurta(p.created_at)}</p>
+                <span class="rounded-full bg-bege px-3 py-0.5 text-xs font-medium text-cafe">${statusTxt}</span>
+              </div>
+              <ul class="mt-3 space-y-1">${itens || '<li class="text-sm text-cafe/50">—</li>'}</ul>
+              <p class="mt-3 border-t border-cafe/10 pt-3 text-right font-titulo text-lg text-terracota">${formatBRL(Number(p.total_centavos || 0))}</p>
+            </article>`;
+        })
+        .join('')
+    : `<p class="py-8 text-center text-sm text-cafe/60">teus pedidos aparecem aqui quando tu levar algo do Casa. 💛</p>`;
+
+  root.innerHTML = `
+    <div class="mx-auto max-w-3xl">
+      <p class="decor text-2xl sm:text-3xl">teus pedidos</p>
+      <h1 class="mt-1 font-titulo text-3xl sm:text-4xl">o que tu levou pra casa</h1>
+      <div class="mt-8 grid gap-4">${lista}</div>
+      <div class="mt-10 border-t border-cafe/10 pt-6">
+        <a href="/pages/conta/perfil.html" class="btn-ghost"><i data-lucide="arrow-left" class="h-4 w-4"></i>voltar pra conta</a>
+      </div>
+    </div>`;
+
+  renderIcons();
+}
+
+// --- Toast de conquista nova ---------------------------------------------------
+// Ao carregar (logado), compara user_achievements com o que já foi VISTO
+// (localStorage). Conquista nova → toast discreto no canto, um por vez, 6s.
+// 1ª vez sem baseline: marca tudo como visto SEM toastar retroativo.
+const SEEN_ACHIEVEMENTS_KEY = 'casa_seen_achievements';
+
+function toastContainer() {
+  let c = document.querySelector('[data-toast-container]');
+  if (!c) {
+    c = document.createElement('div');
+    c.setAttribute('data-toast-container', '');
+    c.className = 'fixed bottom-4 right-4 z-[60] flex max-w-[90vw] flex-col gap-2';
+    document.body.appendChild(c);
+  }
+  return c;
+}
+
+function mostrarToastConquista(meta) {
+  return new Promise((resolve) => {
+    const el = document.createElement('div');
+    el.setAttribute('role', 'status');
+    el.className =
+      'flex max-w-xs translate-y-2 items-center gap-3 rounded-2xl bg-branco/95 p-4 opacity-0 shadow-xl ring-1 ring-terracota/20 backdrop-blur-md transition duration-300';
+    el.innerHTML = `
+      <span class="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-terracota/10 text-terracota"><i data-lucide="${iconeConquista(meta.icone)}" class="h-5 w-5"></i></span>
+      <div class="min-w-0">
+        <p class="text-xs uppercase tracking-wide text-cafe/50">nova conquista</p>
+        <p class="font-titulo text-sm leading-tight">${escapeHtml(meta.nome)}</p>
+        <p class="text-xs text-cafe/60">bem-vindo à mesa 💛</p>
+      </div>`;
+    toastContainer().appendChild(el);
+    renderIcons();
+    requestAnimationFrame(() => el.classList.remove('translate-y-2', 'opacity-0'));
+
+    let fechado = false;
+    const fechar = () => {
+      if (fechado) return;
+      fechado = true;
+      el.classList.add('translate-y-2', 'opacity-0');
+      setTimeout(() => {
+        el.remove();
+        resolve();
+      }, 300);
+    };
+    setTimeout(fechar, 6000);
+    el.addEventListener('click', fechar);
+  });
+}
+
+async function initAchievementToast() {
+  if (!supabase) return;
+  const session = await getSession();
+  if (!session) return;
+
+  const { data: uach } = await supabase
+    .from('user_achievements')
+    .select('achievement_slug, unlocked_at')
+    .eq('user_id', session.user.id)
+    .order('unlocked_at', { ascending: true });
+  const atuais = (uach || []).map((u) => u.achievement_slug);
+  if (!atuais.length) return;
+
+  let vistos = null;
+  try {
+    vistos = JSON.parse(localStorage.getItem(SEEN_ACHIEVEMENTS_KEY) || 'null');
+  } catch {
+    vistos = null;
+  }
+
+  // Sem baseline (1ª vez): marca tudo como visto, sem toastar retroativo.
+  if (!Array.isArray(vistos)) {
+    localStorage.setItem(SEEN_ACHIEVEMENTS_KEY, JSON.stringify(atuais));
+    return;
+  }
+
+  const novas = atuais.filter((s) => !vistos.includes(s));
+  if (!novas.length) return;
+
+  const { data: metas } = await supabase.from('achievements').select('slug, nome, icone').in('slug', novas);
+  const porSlug = new Map((metas || []).map((m) => [m.slug, m]));
+
+  // Um toast por vez, na ordem de desbloqueio.
+  for (const slug of novas) {
+    await mostrarToastConquista(porSlug.get(slug) || { nome: slug, icone: 'award' });
+  }
+  localStorage.setItem(SEEN_ACHIEVEMENTS_KEY, JSON.stringify(atuais));
+}
+
 // --- Confirmação de e-mail (retorno do link) -----------------------------------
 // O supabase-js detecta a sessão na URL (detectSessionInUrl é padrão). Se logou,
 // oferece ir pra conta; se não (link velho/expirado), manda pro login com carinho.
@@ -2103,6 +2501,8 @@ export function initSite() {
   initPerfilPage(); // só age se houver [data-perfil-root] (protege a rota)
   initPontosPage(); // só age se houver [data-pontos-root] (protege a rota)
   initConquistasPage(); // só age se houver [data-conquistas-root] (protege a rota)
+  initPedidosPage(); // só age se houver [data-pedidos-root] (protege a rota)
+  initAchievementToast(); // toast de conquista nova (qualquer página, se logado)
   initAuthConfirmadoPage(); // só age se houver [data-auth-confirmado-root]
   initCarousels(); // só age se houver [data-carousel]
   renderIcons(); // ícones do header/footer + conteúdo estático restante

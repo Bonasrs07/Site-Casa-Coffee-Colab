@@ -9,3 +9,6 @@ dist/
 
 # Supabase CLI: estado local de link/temp (não versionar)
 supabase/.temp/
+
+# Config local de tooling (Claude Code launch.json etc.)
+.claude/
