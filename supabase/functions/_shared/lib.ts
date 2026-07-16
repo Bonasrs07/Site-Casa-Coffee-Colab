@@ -77,4 +77,127 @@ export function getSiteUrl(): string {
   return requireEnv('SITE_URL').replace(/\/+$/, ''); // sem barra final
 }
 
+// --- Stripe Customer do usuário (cria e persiste em profiles, ou reusa) -------
+// Usado por create-checkout-session (assinatura e loja) e create-portal-session.
+export async function ensureStripeCustomer(user: { id: string; email?: string | null }): Promise<string> {
+  const { data: profile } = await supabaseAdmin
+    .from('profiles')
+    .select('stripe_customer_id')
+    .eq('id', user.id)
+    .maybeSingle();
+  if (profile?.stripe_customer_id) return profile.stripe_customer_id;
+
+  const customer = await stripe.customers.create({
+    email: user.email ?? undefined,
+    metadata: { supabase_user_id: user.id },
+  });
+  await supabaseAdmin.from('profiles').update({ stripe_customer_id: customer.id }).eq('id', user.id);
+  return customer.id;
+}
+
+// =============================================================================
+// CARRINHO — preço/validação SEMPRE do BANCO (nunca do client).
+// O client manda só { product_slug, variant, qtd }. Aqui a gente busca o preço
+// real em products/product_variants e soma o subtotal server-side. Ver CLAUDE.md
+// › Segurança ("confiança zero no client").
+// =============================================================================
+export interface CartInputItem {
+  product_slug: string;
+  variant?: string | null; // opcao da product_variants (ex.: 'Moído p/ coado'), ou null
+  qtd: number;
+}
+export interface CartLine {
+  product_id: string;
+  variant_id: string | null;
+  product_slug: string;
+  nome: string; // nome do produto (snapshot)
+  variant_opcao: string | null; // opcao crua (pra resolver depois)
+  variante_label: string | null; // 'Moagem: Moído p/ coado' (exibição/snapshot)
+  unit_cents: number; // preço unitário já com delta da variante
+  qtd: number;
+}
+
+export async function computeCartFromDb(
+  items: CartInputItem[],
+): Promise<{ lines: CartLine[]; subtotal_cents: number }> {
+  if (!Array.isArray(items) || items.length === 0) throw new Error('carrinho vazio');
+  if (items.length > 50) throw new Error('carrinho grande demais');
+
+  const lines: CartLine[] = [];
+  let subtotal = 0;
+
+  for (const it of items) {
+    const slug = String(it?.product_slug ?? '').trim();
+    const qtd = Number(it?.qtd);
+    if (!slug) throw new Error('item sem product_slug');
+    if (!Number.isInteger(qtd) || qtd < 1 || qtd > 99) throw new Error('quantidade inválida');
+
+    const { data: prod, error } = await supabaseAdmin
+      .from('products')
+      .select('id, slug, nome, preco_centavos, ativo')
+      .eq('slug', slug)
+      .maybeSingle();
+    if (error) throw new Error('erro ao ler produto');
+    if (!prod || !prod.ativo) throw new Error(`produto indisponível: ${slug}`);
+
+    let unit = prod.preco_centavos;
+    let variantId: string | null = null;
+    let variantOpcao: string | null = null;
+    let variantLabel: string | null = null;
+
+    const opcao = it?.variant ? String(it.variant).trim() : '';
+    if (opcao) {
+      const { data: v } = await supabaseAdmin
+        .from('product_variants')
+        .select('id, rotulo, opcao, preco_delta_centavos, ativo')
+        .eq('product_id', prod.id)
+        .eq('opcao', opcao)
+        .maybeSingle();
+      if (!v || !v.ativo) throw new Error(`opção indisponível: ${opcao}`);
+      variantId = v.id;
+      variantOpcao = v.opcao;
+      variantLabel = v.rotulo ? `${v.rotulo}: ${v.opcao}` : v.opcao;
+      unit += v.preco_delta_centavos ?? 0;
+    }
+
+    subtotal += unit * qtd;
+    lines.push({
+      product_id: prod.id,
+      variant_id: variantId,
+      product_slug: prod.slug,
+      nome: prod.nome,
+      variant_opcao: variantOpcao,
+      variante_label: variantLabel,
+      unit_cents: unit,
+      qtd,
+    });
+  }
+
+  return { lines, subtotal_cents: subtotal };
+}
+
+// Desconto do tier ATIVO do usuário (profiles.tier_slug → tiers.discount_percent).
+// Sem assinatura ativa = 0%. Nunca vem do client.
+export async function getUserTierDiscount(
+  userId: string,
+): Promise<{ tier_slug: string | null; discount_percent: number }> {
+  const { data: profile } = await supabaseAdmin
+    .from('profiles')
+    .select('tier_slug')
+    .eq('id', userId)
+    .maybeSingle();
+  const slug = profile?.tier_slug ?? null;
+  if (!slug) return { tier_slug: null, discount_percent: 0 };
+
+  const { data: tier } = await supabaseAdmin
+    .from('tiers')
+    .select('slug, discount_percent, ativo')
+    .eq('slug', slug)
+    .maybeSingle();
+  if (!tier || !tier.ativo) return { tier_slug: null, discount_percent: 0 };
+
+  const pct = Number(tier.discount_percent ?? 0);
+  return { tier_slug: tier.slug, discount_percent: pct > 0 && pct <= 100 ? pct : 0 };
+}
+
 export { Stripe };

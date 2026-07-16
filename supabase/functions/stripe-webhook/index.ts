@@ -114,6 +114,142 @@ async function syncSubscription(sub: Stripe.Subscription): Promise<void> {
   // idempotente por event.id). Agora NÃO — só assinatura/tier nesta leva.
 }
 
+// =============================================================================
+// LOJA (mode 'payment') — cria/atualiza o pedido a partir da sessão paga.
+// Idempotente por orders.stripe_checkout_id (UNIQUE na 0007): reentrega do
+// evento não duplica. Pix/Boleto são assíncronos → 'completed' pode vir com
+// payment_status != 'paid' (cria 'pendente'); o async_payment_succeeded depois
+// atualiza pra 'pago'. Escrita via service_role (ignora RLS).
+// =============================================================================
+interface CartMetaItem { sl?: string; vo?: string; n?: string; u?: number; q?: number }
+
+async function upsertStoreOrder(
+  session: Stripe.Checkout.Session,
+  opts: { failed?: boolean } = {},
+): Promise<void> {
+  const meta = session.metadata ?? {};
+  if (meta.kind !== 'store') return; // não é pedido de loja
+  const userId = meta.user_id;
+  if (!userId) {
+    console.warn('[stripe-webhook] sessão de loja sem user_id:', session.id);
+    return;
+  }
+
+  // Valores REAIS cobrados (fonte da verdade = Stripe). Fallback pro que a
+  // create-checkout-session calculou server-side (metadata), nunca do client.
+  const subtotal = session.amount_subtotal ?? Number(meta.subtotal_cents ?? 0);
+  const discount = session.total_details?.amount_discount ?? 0;
+  const total = session.amount_total ?? subtotal - discount;
+
+  const status = opts.failed ? 'cancelado' : session.payment_status === 'paid' ? 'pago' : 'pendente';
+  const tierSlug = meta.tier_slug || null;
+  const paymentIntent =
+    typeof session.payment_intent === 'string' ? session.payment_intent : session.payment_intent?.id ?? null;
+
+  // Idempotência: já existe pedido pra esta sessão? Atualiza status/totais
+  // (ex.: pendente → pago no async), sem reinserir itens.
+  const { data: existing } = await supabaseAdmin
+    .from('orders')
+    .select('id')
+    .eq('stripe_checkout_id', session.id)
+    .maybeSingle();
+
+  if (existing) {
+    const { error } = await supabaseAdmin
+      .from('orders')
+      .update({
+        status,
+        subtotal_centavos: subtotal,
+        desconto_centavos: discount,
+        total_centavos: total,
+        stripe_payment_intent: paymentIntent,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', existing.id);
+    if (error) throw error;
+    return;
+  }
+
+  // Cria o pedido.
+  const { data: order, error: oErr } = await supabaseAdmin
+    .from('orders')
+    .insert({
+      user_id: userId,
+      status,
+      origem: 'site',
+      subtotal_centavos: subtotal,
+      desconto_centavos: discount,
+      total_centavos: total,
+      tier_slug_aplicado: tierSlug,
+      stripe_checkout_id: session.id,
+      stripe_payment_intent: paymentIntent,
+    })
+    .select('id')
+    .single();
+
+  if (oErr) {
+    if (oErr.code === '23505') return; // corrida: outra entrega já criou
+    throw oErr;
+  }
+
+  // Itens, a partir do snapshot server-side (metadata.items). Resolve os FKs
+  // product_id/variant_id por slug/opcao (nullable — on delete set null).
+  let itens: CartMetaItem[] = [];
+  try {
+    itens = JSON.parse(meta.items ?? '[]');
+  } catch {
+    itens = [];
+  }
+
+  const rows = [];
+  for (const it of itens) {
+    let productId: string | null = null;
+    let variantId: string | null = null;
+    let varianteSnapshot: string | null = it.vo || null;
+
+    if (it.sl) {
+      const { data: p } = await supabaseAdmin.from('products').select('id').eq('slug', it.sl).maybeSingle();
+      productId = p?.id ?? null;
+      if (productId && it.vo) {
+        const { data: v } = await supabaseAdmin
+          .from('product_variants')
+          .select('id, rotulo, opcao')
+          .eq('product_id', productId)
+          .eq('opcao', it.vo)
+          .maybeSingle();
+        if (v) {
+          variantId = v.id;
+          varianteSnapshot = v.rotulo ? `${v.rotulo}: ${v.opcao}` : v.opcao;
+        }
+      }
+    }
+
+    rows.push({
+      order_id: order.id,
+      product_id: productId,
+      variant_id: variantId,
+      nome_snapshot: it.n ?? it.sl ?? 'item',
+      variante_snapshot: varianteSnapshot,
+      preco_unit_centavos: it.u ?? 0,
+      qtd: it.q ?? 1,
+    });
+  }
+
+  if (rows.length) {
+    const { error: iErr } = await supabaseAdmin.from('order_items').insert(rows);
+    if (iErr) {
+      // Rollback best-effort: sem itens, o pedido não deve ficar órfão. Deleta e
+      // deixa o Stripe reentregar (idempotência recria limpo).
+      await supabaseAdmin.from('orders').delete().eq('id', order.id);
+      throw iErr;
+    }
+  }
+
+  // TODO (Fase 3): creditar PONTOS da compra aqui. Valor final já calculado:
+  // `total` (centavos) × tiers.points_multiplier do tier ativo → points_ledger
+  // (append-only, idempotente por session.id). Só quando o status for 'pago'.
+}
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return new Response('método não permitido', { status: 405 });
 
@@ -149,7 +285,20 @@ Deno.serve(async (req) => {
             typeof session.subscription === 'string' ? session.subscription : session.subscription.id;
           const sub = await stripe.subscriptions.retrieve(subId);
           await syncSubscription(sub);
+        } else if (session.mode === 'payment') {
+          // Loja: cartão fecha aqui como 'paid'; Pix/Boleto podem vir 'unpaid'
+          // (async) e o async_payment_succeeded abaixo finaliza pra 'pago'.
+          await upsertStoreOrder(session);
         }
+        break;
+      }
+      // Pix/Boleto (pagamento assíncrono) confirmam/falham depois do checkout.
+      case 'checkout.session.async_payment_succeeded': {
+        await upsertStoreOrder(event.data.object as Stripe.Checkout.Session);
+        break;
+      }
+      case 'checkout.session.async_payment_failed': {
+        await upsertStoreOrder(event.data.object as Stripe.Checkout.Session, { failed: true });
         break;
       }
       case 'customer.subscription.created':
