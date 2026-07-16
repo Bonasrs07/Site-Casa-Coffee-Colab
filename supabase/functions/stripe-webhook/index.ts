@@ -14,7 +14,7 @@
 // Não precisa de verify_jwt — desligue no deploy (--no-verify-jwt).
 // =============================================================================
 
-import { Stripe, stripe, supabaseAdmin, requireEnv, creditPoints } from '../_shared/lib.ts';
+import { Stripe, stripe, supabaseAdmin, requireEnv, creditPoints, checkAchievements } from '../_shared/lib.ts';
 
 const WEBHOOK_SECRET = requireEnv('STRIPE_WEBHOOK_SECRET');
 
@@ -109,6 +109,9 @@ async function syncSubscription(sub: Stripe.Subscription): Promise<void> {
     .update({ tier_slug: novoTier })
     .eq('id', userId);
   if (profErr) throw profErr;
+
+  // Reavalia conquistas de tier (ex.: 'Gente do Casa' no Ouro). Best-effort.
+  await checkAchievements(userId);
 }
 
 // =============================================================================
@@ -267,6 +270,8 @@ async function creditOrderPoints(
     refId: sessionId,
     tierSlug,
   });
+  // Reavalia conquistas de compra (Primeira Xícara, Café Viajante…). Best-effort.
+  await checkAchievements(userId);
 }
 
 // Pontos da RENOVAÇÃO mensal (invoice.paid). A PRIMEIRA fatura
@@ -313,6 +318,8 @@ async function creditInvoicePoints(invoice: Stripe.Invoice): Promise<void> {
     refId: invoice.id,
     tierSlug,
   });
+  // Reavalia conquistas de tempo de casa (subscription_months). Best-effort.
+  await checkAchievements(userId);
 }
 
 Deno.serve(async (req) => {

@@ -14,7 +14,7 @@
 // Retorna: { ok, saldo, reward, codigo? } ou { error } com mensagem gentil.
 // =============================================================================
 
-import { supabaseAdmin, handleCors, jsonResponse, getUserFromRequest } from '../_shared/lib.ts';
+import { supabaseAdmin, handleCors, jsonResponse, getUserFromRequest, checkAchievements } from '../_shared/lib.ts';
 
 Deno.serve(async (req) => {
   const pre = handleCors(req);
@@ -51,6 +51,10 @@ Deno.serve(async (req) => {
   if (!data || data.ok !== true) {
     return jsonResponse({ error: data?.erro ?? 'não deu pra resgatar', ...data }, 400);
   }
+
+  // Resgate ok → reavalia conquistas (ex.: primeiro resgate). Best-effort: não
+  // pode derrubar a resposta de sucesso do resgate se falhar.
+  await checkAchievements(user.id);
 
   return jsonResponse(data);
 });

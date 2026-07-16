@@ -37,6 +37,7 @@ import {
   Copy,
   Check,
   ArrowLeft,
+  Lock,
 } from 'lucide';
 import { createClient } from '@supabase/supabase-js';
 
@@ -70,6 +71,7 @@ const LUCIDE_ICONS = {
   Copy,
   Check,
   ArrowLeft,
+  Lock,
 };
 function renderIcons() {
   createIcons({ icons: LUCIDE_ICONS });
@@ -1339,6 +1341,9 @@ function updateAuthUI(session) {
       ? `<a href="/pages/conta/perfil.html" class="flex items-center gap-2 py-2 text-lg text-cafe" data-menu-link>
            <i data-lucide="user" class="h-5 w-5"></i>${nome}
          </a>
+         <a href="/pages/conta/conquistas.html" class="flex items-center gap-2 py-2 text-lg text-cafe" data-menu-link>
+           <i data-lucide="award" class="h-5 w-5"></i>minhas conquistas
+         </a>
          <button type="button" data-signout class="mt-2 inline-flex items-center gap-2 text-cafe/70 hover:text-terracota">
            <i data-lucide="log-out" class="h-5 w-5"></i>sair da conta
          </button>`
@@ -1579,6 +1584,12 @@ async function initPerfilPage() {
           <dd class="mt-1 truncate text-sm text-cafe" title="${email}">${email}</dd>
         </div>
       </dl>
+
+      <div class="mt-4">
+        <a href="/pages/conta/conquistas.html" class="inline-flex items-center gap-2 text-sm font-medium text-terracota hover:underline">
+          <i data-lucide="award" class="h-4 w-4"></i>minhas conquistas
+        </a>
+      </div>
 
       <form class="mt-10" data-perfil-form novalidate>
         <h2 class="font-titulo text-xl">teus dados</h2>
@@ -1934,6 +1945,105 @@ async function initPontosPage() {
   await carregar();
 }
 
+// --- Conquistas (área logada) --------------------------------------------------
+// Grid dos emblemas: desbloqueados coloridos com a data; bloqueados em silhueta
+// (cadeado) com uma dica gentil (a própria descrição da conquista). A engine de
+// desbloqueio é 100% server-side (check_achievements, chamada nos webhooks e no
+// resgate) — aqui a página só LÊ (RLS: achievements é público; user_achievements,
+// só o próprio). Ícone e textos do banco são escapados antes de ir pro DOM.
+
+// Só aceita nomes de ícone Lucide que a gente registrou (evita <i> vazio e não
+// confia cegamente na string do banco). Fallback gentil pro 'award'.
+const ICONES_CONQUISTA = new Set(['coffee', 'sunrise', 'heart', 'award', 'star', 'sparkles', 'gift']);
+function iconeConquista(nome) {
+  return ICONES_CONQUISTA.has(nome) ? nome : 'award';
+}
+
+async function initConquistasPage() {
+  const root = document.querySelector('[data-conquistas-root]');
+  if (!root) return;
+
+  const session = await requireAuth();
+  if (!session) return; // já redirecionou pro login
+
+  if (!supabase) {
+    root.innerHTML = `<p class="text-center text-cafe/60">as conquistas ainda não estão ligadas por aqui (config pendente).</p>`;
+    return;
+  }
+
+  // Catálogo (leitura pública) + as que ESTE usuário desbloqueou (RLS: só o
+  // próprio). Uma leitura de cada, em paralelo.
+  const [{ data: todas }, { data: minhas }] = await Promise.all([
+    supabase
+      .from('achievements')
+      .select('slug, nome, descricao, icone, ordem')
+      .eq('ativo', true)
+      .order('ordem', { ascending: true }),
+    supabase
+      .from('user_achievements')
+      .select('achievement_slug, unlocked_at')
+      .eq('user_id', session.user.id),
+  ]);
+
+  const desbloqueadas = new Map((minhas || []).map((u) => [u.achievement_slug, u.unlocked_at]));
+  const total = (todas || []).length;
+  const conquistadas = (todas || []).filter((a) => desbloqueadas.has(a.slug)).length;
+
+  const cards = (todas || [])
+    .map((a) => {
+      const nome = escapeHtml(a.nome);
+      const descricao = escapeHtml(a.descricao || '');
+      const icone = iconeConquista(a.icone);
+      const quando = desbloqueadas.get(a.slug);
+
+      if (quando) {
+        return `
+          <article class="flex flex-col items-center rounded-2xl bg-branco/70 p-5 text-center ring-1 ring-terracota/20">
+            <span class="grid h-14 w-14 place-items-center rounded-full bg-terracota/10 text-terracota">
+              <i data-lucide="${icone}" class="h-7 w-7"></i>
+            </span>
+            <h3 class="mt-3 font-titulo text-lg leading-tight">${nome}</h3>
+            <p class="mt-1 text-sm text-cafe/70">${descricao}</p>
+            <p class="mt-3 text-xs font-medium text-verde">desbloqueado em ${formatarDataCurta(quando)}</p>
+          </article>`;
+      }
+      return `
+        <article class="flex flex-col items-center rounded-2xl bg-bege/40 p-5 text-center ring-1 ring-cafe/10">
+          <span class="relative grid h-14 w-14 place-items-center rounded-full bg-cafe/5 text-cafe/30">
+            <i data-lucide="${icone}" class="h-7 w-7"></i>
+            <span class="absolute -bottom-1 -right-1 grid h-6 w-6 place-items-center rounded-full bg-bege text-cafe/50 ring-2 ring-branco">
+              <i data-lucide="lock" class="h-3.5 w-3.5"></i>
+            </span>
+          </span>
+          <h3 class="mt-3 font-titulo text-lg leading-tight text-cafe/50">${nome}</h3>
+          <p class="mt-1 text-sm text-cafe/50">${descricao}</p>
+          <p class="mt-3 text-xs text-cafe/40">ainda por vir 💛</p>
+        </article>`;
+    })
+    .join('');
+
+  root.innerHTML = `
+    <div class="mx-auto max-w-4xl">
+      <p class="decor text-2xl sm:text-3xl">tuas conquistas</p>
+      <div class="mt-3 flex flex-wrap items-end gap-x-6 gap-y-2">
+        <p class="font-titulo text-5xl text-terracota">${conquistadas}<span class="text-2xl text-cafe/40">/${total}</span></p>
+        <p class="pb-1 text-cafe/70">emblemas desbloqueados — cada um do teu jeito, no teu tempo.</p>
+      </div>
+
+      <section class="mt-10">
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          ${cards || '<p class="text-sm text-cafe/60">as conquistas chegam já já.</p>'}
+        </div>
+      </section>
+
+      <div class="mt-10 border-t border-cafe/10 pt-6">
+        <a href="/pages/conta/perfil.html" class="btn-ghost"><i data-lucide="arrow-left" class="h-4 w-4"></i>voltar pra conta</a>
+      </div>
+    </div>`;
+
+  renderIcons();
+}
+
 // --- Confirmação de e-mail (retorno do link) -----------------------------------
 // O supabase-js detecta a sessão na URL (detectSessionInUrl é padrão). Se logou,
 // oferece ir pra conta; se não (link velho/expirado), manda pro login com carinho.
@@ -1992,6 +2102,7 @@ export function initSite() {
   initLoginPage(); // só age se houver [data-login-form]
   initPerfilPage(); // só age se houver [data-perfil-root] (protege a rota)
   initPontosPage(); // só age se houver [data-pontos-root] (protege a rota)
+  initConquistasPage(); // só age se houver [data-conquistas-root] (protege a rota)
   initAuthConfirmadoPage(); // só age se houver [data-auth-confirmado-root]
   initCarousels(); // só age se houver [data-carousel]
   renderIcons(); // ícones do header/footer + conteúdo estático restante

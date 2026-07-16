@@ -252,4 +252,23 @@ export async function creditPoints(args: {
   return pontos;
 }
 
+// =============================================================================
+// CONQUISTAS (Fase 3) — reavalia os emblemas do usuário via engine SQL.
+// check_achievements (SECURITY DEFINER, 0009) roda como owner, avalia os
+// critérios contra os dados reais (orders/tier/ledger/redemptions) e insere os
+// cumpridos em user_achievements (ON CONFLICT DO NOTHING → idempotente).
+// Best-effort: NUNCA lança — conquista é secundária e não pode derrubar o
+// crédito de pontos nem o resgate. Chamada só server-side com o id do PRÓPRIO
+// usuário. Retorna quantas conquistas NOVAS foram desbloqueadas.
+// =============================================================================
+export async function checkAchievements(userId: string): Promise<number> {
+  if (!userId) return 0;
+  const { data, error } = await supabaseAdmin.rpc('check_achievements', { p_user_id: userId });
+  if (error) {
+    console.error('[checkAchievements]', error);
+    return 0;
+  }
+  return Number(data ?? 0);
+}
+
 export { Stripe };
