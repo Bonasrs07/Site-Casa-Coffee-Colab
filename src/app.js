@@ -40,6 +40,7 @@ import {
   Lock,
   ChevronDown,
   CreditCard,
+  KeyRound,
 } from 'lucide';
 import { createClient } from '@supabase/supabase-js';
 
@@ -76,6 +77,7 @@ const LUCIDE_ICONS = {
   Lock,
   ChevronDown,
   CreditCard,
+  KeyRound,
 };
 function renderIcons() {
   createIcons({ icons: LUCIDE_ICONS });
@@ -1463,7 +1465,7 @@ async function renderUserPanel(panel) {
       ? supabase.from('tiers').select('nome').eq('slug', profile.tier_slug).maybeSingle()
       : Promise.resolve({ data: null }),
     supabase.from('rewards_catalog').select('nome, custo_em_pontos, ativo, estoque').eq('ativo', true).order('custo_em_pontos', { ascending: true }),
-    supabase.from('achievements').select('slug, nome, icone, ordem').eq('ativo', true).order('ordem', { ascending: true }),
+    supabase.from('achievements').select('slug, nome, dica, icone, ordem').eq('ativo', true).order('ordem', { ascending: true }),
     supabase.from('user_achievements').select('achievement_slug').eq('user_id', session.user.id),
   ]);
 
@@ -1495,9 +1497,10 @@ async function renderUserPanel(panel) {
     .map((a) => {
       const icone = iconeConquista(a.icone);
       const on = desbloq.has(a.slug);
+      const dicaTip = a.dica ? ` — ${escapeHtml(a.dica)}` : '';
       return on
         ? `<span title="${escapeHtml(a.nome)}" class="grid h-9 w-9 place-items-center rounded-full bg-terracota/10 text-terracota"><i data-lucide="${icone}" class="h-4 w-4"></i></span>`
-        : `<span title="${escapeHtml(a.nome)}" class="grid h-9 w-9 place-items-center rounded-full bg-cafe/5 text-cafe/30"><i data-lucide="lock" class="h-4 w-4"></i></span>`;
+        : `<span title="${escapeHtml(a.nome)}${dicaTip}" class="grid h-9 w-9 place-items-center rounded-full bg-cafe/5 text-cafe/30"><i data-lucide="lock" class="h-4 w-4"></i></span>`;
     })
     .join('');
 
@@ -2215,7 +2218,7 @@ async function initConquistasPage() {
   const [{ data: todas }, { data: minhas }] = await Promise.all([
     supabase
       .from('achievements')
-      .select('slug, nome, descricao, icone, ordem')
+      .select('slug, nome, descricao, dica, icone, ordem')
       .eq('ativo', true)
       .order('ordem', { ascending: true }),
     supabase
@@ -2232,6 +2235,7 @@ async function initConquistasPage() {
     .map((a) => {
       const nome = escapeHtml(a.nome);
       const descricao = escapeHtml(a.descricao || '');
+      const dica = escapeHtml(a.dica || '');
       const icone = iconeConquista(a.icone);
       const quando = desbloqueadas.get(a.slug);
 
@@ -2256,7 +2260,16 @@ async function initConquistasPage() {
           </span>
           <h3 class="mt-3 font-titulo text-lg leading-tight text-cafe/50">${nome}</h3>
           <p class="mt-1 text-sm text-cafe/50">${descricao}</p>
-          <p class="mt-3 text-xs text-cafe/40">ainda por vir 💛</p>
+          ${
+            dica
+              ? `<div class="mt-3 w-full rounded-xl bg-cafe/5 px-3 py-2 text-left">
+                   <p class="flex items-center gap-1 text-[11px] font-medium uppercase tracking-wide text-caramelo">
+                     <i data-lucide="key-round" class="h-3 w-3"></i>como desbloquear
+                   </p>
+                   <p class="mt-0.5 text-xs leading-snug text-cafe/70">${dica}</p>
+                 </div>`
+              : `<p class="mt-3 text-xs text-cafe/40">ainda por vir 💛</p>`
+          }
         </article>`;
     })
     .join('');
