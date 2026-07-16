@@ -631,10 +631,9 @@ function renderDrawer() {
             <span class="text-sm text-cafe/70">subtotal</span>
             <span class="font-titulo text-lg" data-cart-subtotal>R$ 0,00</span>
           </div>
+          <p class="mt-2 hidden text-center text-xs text-verde" data-cart-discount></p>
           <button type="button" data-checkout class="btn-primary mt-4 w-full">finalizar compra</button>
-          <p class="mt-3 hidden text-center text-xs text-cafe/70" data-checkout-note>
-            o checkout chega na próxima fase — o pagamento via Stripe vem aí. por ora, fica um pouco. 💛
-          </p>
+          <p class="mt-3 hidden text-center text-xs text-terracota" data-checkout-note aria-live="polite"></p>
         </footer>
       </aside>
     </div>
@@ -702,6 +701,18 @@ function updateCartUI() {
 
   const subtotalEl = footer.querySelector('[data-cart-subtotal]');
   if (subtotalEl) subtotalEl.textContent = formatBRL(Cart.getSubtotalCentavos());
+
+  // Aviso do desconto do tier (informativo — o valor real entra no checkout).
+  const descEl = footer.querySelector('[data-cart-discount]');
+  if (descEl) {
+    if (cartDiscountPct > 0) {
+      descEl.textContent = `teu desconto de ${cartDiscountPct}% já entra no checkout 💛`;
+      descEl.classList.remove('hidden');
+    } else {
+      descEl.classList.add('hidden');
+    }
+  }
+
   footer.classList.remove('hidden');
   renderIcons();
 }
@@ -760,9 +771,54 @@ function initCart() {
       else if (e.target.closest('[data-cart-remove]')) Cart.removeItem(key);
     });
 
-    // Checkout — placeholder (Stripe vem na Fase 2)
-    root.querySelector('[data-checkout]')?.addEventListener('click', () => {
-      root.querySelector('[data-checkout-note]')?.classList.remove('hidden');
+    // Checkout — chama a Edge Function create-checkout-session (mode 'payment').
+    const checkoutBtn = root.querySelector('[data-checkout]');
+    const checkoutNote = root.querySelector('[data-checkout-note]');
+    const avisarCheckout = (msg) => {
+      if (!checkoutNote) return;
+      checkoutNote.textContent = msg; // textContent (nunca innerHTML) — anti-XSS
+      checkoutNote.classList.remove('hidden');
+    };
+    checkoutBtn?.addEventListener('click', async () => {
+      checkoutNote?.classList.add('hidden');
+
+      const itens = Cart.getCart()
+        .map((it) => {
+          const p = getProdutoPorId(it.produtoId);
+          return p ? { product_slug: p.slug, variant: it.variante || null, qtd: it.qtd } : null;
+        })
+        .filter(Boolean);
+      if (itens.length === 0) return;
+
+      if (!supabase) return avisarCheckout('o checkout ainda não tá ligado por aqui (config pendente). 💛');
+
+      // Requer login (o pedido/desconto/pontos dependem do usuário). Deslogado →
+      // manda pro login e VOLTA pro carrinho (?cart=open reabre o drawer).
+      const session = await getSession();
+      if (!session) {
+        const destino = encodeURIComponent(window.location.pathname + '?cart=open');
+        window.location.href = `/pages/login.html?redirect=${destino}`;
+        return;
+      }
+
+      const texto = checkoutBtn.textContent;
+      checkoutBtn.disabled = true;
+      checkoutBtn.textContent = 'te levando pro pagamento…';
+      try {
+        const { data, error } = await supabase.functions.invoke('create-checkout-session', {
+          body: { items: itens },
+        });
+        if (error || !data?.url) {
+          avisarCheckout('não deu pra abrir o pagamento agora. tenta de novo daqui a pouco? 💛');
+          return;
+        }
+        window.location.href = data.url; // Checkout hospedado do Stripe
+      } catch {
+        avisarCheckout('a gente não conseguiu falar com o servidor agora. confere tua conexão?');
+      } finally {
+        checkoutBtn.disabled = false;
+        checkoutBtn.textContent = texto;
+      }
     });
   }
 
@@ -778,6 +834,29 @@ function initCart() {
   });
 
   updateCartUI(); // estado inicial
+  loadCartDiscount(); // busca o desconto do tier (se logado) e mostra no drawer
+
+  // Volta do login pro carrinho: ?cart=open reabre o drawer.
+  if (new URLSearchParams(window.location.search).get('cart') === 'open') {
+    openDrawer();
+  }
+}
+
+// Busca o desconto do tier ATIVO do usuário e mostra o aviso gentil no drawer.
+// É só informativo — o desconto REAL é aplicado server-side no checkout.
+let cartDiscountPct = 0;
+async function loadCartDiscount() {
+  if (!supabase) return;
+  const profile = await getProfile();
+  const slug = profile?.tier_slug;
+  if (!slug) return;
+  const { data: tier } = await supabase
+    .from('tiers')
+    .select('discount_percent')
+    .eq('slug', slug)
+    .maybeSingle();
+  cartDiscountPct = Number(tier?.discount_percent || 0);
+  updateCartUI();
 }
 
 // =============================================================================
@@ -1163,6 +1242,13 @@ function initPlanosPage() {
   );
 }
 
+// Página de sucesso do checkout: compra concluída → esvazia o carrinho local.
+// (A fonte da verdade do pedido é o banco, gravado pelo webhook; o carrinho é só UI.)
+function initCheckoutSucessoPage() {
+  if (!document.querySelector('[data-checkout-sucesso]')) return;
+  Cart.clearCart();
+}
+
 // =============================================================================
 // AUTH — UI do header, guard de rota e páginas (cadastro/login/perfil).
 // =============================================================================
@@ -1400,7 +1486,8 @@ async function initPerfilPage() {
 
   // Nome do plano (tiers é leitura pública). Sem plano ainda → texto gentil.
   let plano = 'ainda sem plano';
-  if (profile?.tier_slug && supabase) {
+  const temPlano = Boolean(profile?.tier_slug);
+  if (temPlano && supabase) {
     const { data: t } = await supabase.from('tiers').select('nome').eq('slug', profile.tier_slug).single();
     plano = escapeHtml(t?.nome || profile.tier_slug);
   }
@@ -1418,6 +1505,12 @@ async function initPerfilPage() {
         <div class="rounded-2xl bg-branco/60 p-4 ring-1 ring-cafe/10">
           <dt class="text-xs uppercase tracking-wide text-cafe/50">teu plano</dt>
           <dd class="mt-1 font-titulo text-lg">${plano}</dd>
+          ${
+            temPlano
+              ? `<button type="button" data-gerenciar-assinatura class="mt-2 text-xs font-medium text-terracota hover:underline">gerenciar assinatura</button>
+                 <p class="mt-1 hidden text-xs text-cafe/60" data-assinatura-msg aria-live="polite"></p>`
+              : `<a href="/pages/planos.html" class="mt-2 inline-block text-xs font-medium text-terracota hover:underline">ver os planos</a>`
+          }
         </div>
         <div class="rounded-2xl bg-branco/60 p-4 ring-1 ring-cafe/10">
           <dt class="text-xs uppercase tracking-wide text-cafe/50">e-mail</dt>
@@ -1453,6 +1546,36 @@ async function initPerfilPage() {
     </div>`;
 
   renderIcons();
+
+  // "gerenciar assinatura" → abre o Billing Portal do Stripe (create-portal-session).
+  const gerenciarBtn = root.querySelector('[data-gerenciar-assinatura]');
+  const assinaturaMsg = root.querySelector('[data-assinatura-msg]');
+  gerenciarBtn?.addEventListener('click', async () => {
+    assinaturaMsg?.classList.add('hidden');
+    if (!supabase) return;
+    const texto = gerenciarBtn.textContent;
+    gerenciarBtn.disabled = true;
+    gerenciarBtn.textContent = 'abrindo…';
+    try {
+      const { data, error } = await supabase.functions.invoke('create-portal-session', { body: {} });
+      if (error || !data?.url) {
+        if (assinaturaMsg) {
+          assinaturaMsg.textContent = 'não deu pra abrir o portal agora. tenta de novo daqui a pouco?';
+          assinaturaMsg.classList.remove('hidden');
+        }
+        return;
+      }
+      window.location.href = data.url;
+    } catch {
+      if (assinaturaMsg) {
+        assinaturaMsg.textContent = 'a gente não conseguiu falar com o servidor agora.';
+        assinaturaMsg.classList.remove('hidden');
+      }
+    } finally {
+      gerenciarBtn.disabled = false;
+      gerenciarBtn.textContent = texto;
+    }
+  });
 
   // Editar nome/telefone — update na PRÓPRIA linha (RLS garante id = auth.uid()).
   const perfilForm = root.querySelector('[data-perfil-form]');
@@ -1561,6 +1684,7 @@ export function initSite() {
   initCatalogPage(); // só age se houver [data-catalog-grid]
   initProductPage(); // só age se houver [data-product-root]
   initPlanosPage(); // só age se houver [data-assinar]
+  initCheckoutSucessoPage(); // só age na checkout-sucesso.html (limpa o carrinho)
   initCadastroPage(); // só age se houver [data-cadastro-form]
   initLoginPage(); // só age se houver [data-login-form]
   initPerfilPage(); // só age se houver [data-perfil-root] (protege a rota)
