@@ -234,22 +234,42 @@ Toda a lógica sensível fica nas **Edge Functions** (`supabase/functions/`), nu
   `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`. No **client** só `VITE_STRIPE_PUBLISHABLE_KEY`.
 - **`_shared/lib.ts`**: client Stripe (fetch http client do Deno), Supabase service_role,
   CORS, `getUserFromRequest()` (valida o JWT), `jsonResponse()`, `getSiteUrl()`.
-- **`create-checkout-session`** (mode `subscription`): valida o JWT; lê tier +
-  `stripe_price_id` do **BANCO** pelo `tier_slug` (nunca confia em preço do client);
-  cria/reusa o Stripe Customer (guarda em `profiles.stripe_customer_id`); monta
-  `success_url`/`cancel_url` server-side a partir de `SITE_URL`. Retorna `url`; o front
-  redireciona (`initPlanosPage`).
+- **`_shared/lib.ts` (loja, 6b)**: `ensureStripeCustomer()`, `computeCartFromDb()`
+  (valida itens e SOMA o subtotal pelo **BANCO** — products/product_variants, nunca do
+  client) e `getUserTierDiscount()` (desconto do tier ATIVO via `profiles.tier_slug →
+  tiers.discount_percent`; sem assinatura = 0%).
+- **`create-checkout-session`** — dois modos:
+  - **assinatura** (`{ tier_slug }` → mode `subscription`): lê `stripe_price_id` do BANCO.
+  - **loja** (`{ items: [{product_slug, variant, qtd}] }` → mode `payment`): recalcula
+    subtotal server-side, aplica o desconto do tier via **Stripe Coupon `percent_off`
+    dinâmico** (`duration:'once'`, `max_redemptions:1`), e grava um snapshot compacto do
+    carrinho em `metadata.items` pro webhook. **Sem `payment_method_types`** → o Checkout
+    usa os métodos habilitados no Dashboard (cartão/Pix/Boleto) sem hardcode.
+  - Ambos: valida JWT, cria/reusa Customer, monta `success_url`/`cancel_url` via `getSiteUrl()`.
+- **`create-portal-session`** (6b): valida JWT, pega `profiles.stripe_customer_id`, cria
+  uma **Billing Portal Session** (`return_url` → perfil). Assinante gerencia/cancela no Stripe.
 - **`stripe-webhook`** (deploy com `--no-verify-jwt`): SEMPRE verifica a assinatura
-  (`constructEventAsync`) + idempotência via `stripe_events` (PK = `event.id`). Trata
-  `checkout.session.completed` e `customer.subscription.created|updated|deleted` →
-  upsert em `subscriptions` (onConflict `stripe_subscription_id`) e espelha
-  `profiles.tier_slug`. Crédito de **pontos** é Fase 3 (só TODO comentado).
-- **Migration `0006_stripe`**: `stripe_events` (RLS on, só owner lê),
-  `profiles.stripe_customer_id`, índice UNIQUE em `subscriptions.stripe_subscription_id`,
-  e bloco comentado de `UPDATE`s pra popular `tiers.stripe_price_id` (rodar DEPOIS do
-  `scripts/stripe-seed.mjs`).
+  (`constructEventAsync`) + idempotência via `stripe_events` (PK = `event.id`).
+  - **assinatura**: `customer.subscription.*` e `checkout.session.completed` (mode
+    subscription) → upsert `subscriptions` + espelha `profiles.tier_slug`.
+  - **loja**: `checkout.session.completed` (mode payment) cria `orders` + `order_items`
+    via service_role (idempotente por `orders.stripe_checkout_id`), com
+    `subtotal/desconto/total` vindos de `session.amount_*` (valor REAL cobrado).
+    Pix/Boleto são assíncronos → `completed` pode criar `pendente` e o
+    `checkout.session.async_payment_succeeded` finaliza pra `pago` (`async_payment_failed`
+    → `cancelado`). Crédito de **pontos** é Fase 3 (só TODO comentado, já com o `total`).
+- **Migration `0006_stripe`**: `stripe_events`, `profiles.stripe_customer_id`, UNIQUE em
+  `subscriptions.stripe_subscription_id`, `UPDATE`s dos `tiers.stripe_price_id`.
+- **Migration `0007_orders_stripe`**: auditoria de `orders`/`order_items` (a 0001 já tinha
+  as colunas — reusadas pelos nomes canônicos PT: `subtotal_centavos`/`desconto_centavos`/
+  `total_centavos`/`tier_slug_aplicado`/`stripe_checkout_id`/`preco_unit_centavos`) +
+  índice **UNIQUE em `orders.stripe_checkout_id`** (idempotência do webhook da loja).
+- **Front (loja)**: o drawer "finalizar compra" chama a function mode `payment` (deslogado
+  → login e volta pro carrinho via `?cart=open`); mostra o aviso do desconto do tier;
+  `checkout-sucesso.html` limpa o carrinho; o perfil tem "gerenciar assinatura" (portal).
 - **Setup/deploy**: ver `supabase/functions/README.md`. Teste com o cartão
-  **4242 4242 4242 4242** (validade futura / CVC / CEP quaisquer).
+  **4242 4242 4242 4242** (validade futura / CVC / CEP quaisquer); Pix/Boleto se simulam
+  no Dashboard/CLI do test mode.
 
 > **Go-live LIVE (o que muda no dia — só config/secrets, o código NÃO muda):**
 > - **Criar os produtos/preços em LIVE mode** (rodar `scripts/stripe-seed.mjs` com a
@@ -257,9 +277,12 @@ Toda a lógica sensível fica nas **Edge Functions** (`supabase/functions/`), nu
 >   `UPDATE public.tiers set stripe_price_id=… ` live (a 0006 é imutável).
 > - Trocar os secrets das functions pros de LIVE: `supabase secrets set` de
 >   `STRIPE_SECRET_KEY` (`sk_live_…`), `STRIPE_WEBHOOK_SECRET` (`whsec_…` do endpoint
->   **live**) e `SITE_URL` (domínio de prod). Re-deploy das duas functions.
+>   **live**) e `SITE_URL` (domínio de prod). Re-deploy das **três** functions.
 > - **Cadastrar um novo endpoint de webhook em LIVE mode** no Stripe (o whsec de test
->   não vale em live), apontando pra URL da function `stripe-webhook`.
+>   não vale em live), com os eventos de assinatura **e** de loja
+>   (`checkout.session.completed`, `customer.subscription.*`,
+>   `checkout.session.async_payment_succeeded|failed`).
+> - **Habilitar Pix e Boleto na conta LIVE** (Settings → Payment methods) — cartão já vem.
 > - No client/Vercel: `VITE_STRIPE_PUBLISHABLE_KEY` = `pk_live_…`.
 > - Conferir que os 4 tiers têm `stripe_price_id` live no banco antes de abrir as vendas.
 
