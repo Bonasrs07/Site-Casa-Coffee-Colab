@@ -14,7 +14,7 @@
 // Não precisa de verify_jwt — desligue no deploy (--no-verify-jwt).
 // =============================================================================
 
-import { Stripe, stripe, supabaseAdmin, requireEnv } from '../_shared/lib.ts';
+import { Stripe, stripe, supabaseAdmin, requireEnv, creditPoints } from '../_shared/lib.ts';
 
 const WEBHOOK_SECRET = requireEnv('STRIPE_WEBHOOK_SECRET');
 
@@ -167,6 +167,8 @@ async function upsertStoreOrder(
       })
       .eq('id', existing.id);
     if (error) throw error;
+    // Boleto/Pix: o crédito acontece quando VIRA 'pago' (async_payment_succeeded).
+    await creditOrderPoints(status, userId, total, tierSlug, session.id);
     return;
   }
 
@@ -245,9 +247,75 @@ async function upsertStoreOrder(
     }
   }
 
-  // TODO (Fase 3): creditar PONTOS da compra aqui. Valor final já calculado:
-  // `total` (centavos) × tiers.points_multiplier do tier ativo → points_ledger
-  // (append-only, idempotente por session.id). Só quando o status for 'pago'.
+  // Pontos da COMPRA: sobre o total JÁ COM DESCONTO, com o multiplicador do tier
+  // aplicado. Só quando 'pago'. Idempotente por (order, session.id).
+  await creditOrderPoints(status, userId, total, tierSlug, session.id);
+}
+
+// Credita os pontos do pedido só quando 'pago' (cartão na hora; boleto/Pix no
+// async). Idempotente pelo (ref_type='order', ref_id=session.id) do ledger.
+async function creditOrderPoints(
+  status: string,
+  userId: string,
+  totalCentavos: number,
+  tierSlug: string | null,
+  sessionId: string,
+): Promise<void> {
+  if (status !== 'pago') return;
+  await creditPoints({
+    userId,
+    valorCentavos: totalCentavos,
+    motivo: 'compra na loja',
+    refType: 'order',
+    refId: sessionId,
+    tierSlug,
+  });
+}
+
+// Pontos da RENOVAÇÃO mensal (invoice.paid). A PRIMEIRA fatura
+// ('subscription_create') NÃO credita aqui — já veio pelo checkout.session.completed.
+// Só o ciclo ('subscription_cycle') credita. Idempotente por (subscription_renewal, invoice.id).
+async function creditInvoicePoints(invoice: Stripe.Invoice): Promise<void> {
+  if (invoice.billing_reason !== 'subscription_cycle') return;
+  const amount = invoice.amount_paid ?? 0;
+  if (amount <= 0) return;
+
+  // deno-lint-ignore no-explicit-any
+  const anyInv = invoice as any;
+  let userId: string | null = null;
+  let tierSlug: string | null = null;
+
+  const subId = typeof anyInv.subscription === 'string' ? anyInv.subscription : anyInv.subscription?.id ?? null;
+  if (subId) {
+    const sub = await stripe.subscriptions.retrieve(subId);
+    userId = sub.metadata?.user_id ?? null;
+    tierSlug = sub.metadata?.tier_slug ?? null;
+  }
+  if (!userId) {
+    const customerId = typeof invoice.customer === 'string' ? invoice.customer : invoice.customer?.id ?? null;
+    if (customerId) {
+      const { data } = await supabaseAdmin
+        .from('profiles')
+        .select('id, tier_slug')
+        .eq('stripe_customer_id', customerId)
+        .maybeSingle();
+      userId = data?.id ?? null;
+      tierSlug = tierSlug ?? data?.tier_slug ?? null;
+    }
+  }
+  if (!userId) {
+    console.warn('[stripe-webhook] invoice.paid sem user resolvível:', invoice.id);
+    return;
+  }
+
+  await creditPoints({
+    userId,
+    valorCentavos: amount,
+    motivo: 'renovação da assinatura',
+    refType: 'subscription_renewal',
+    refId: invoice.id,
+    tierSlug,
+  });
 }
 
 Deno.serve(async (req) => {
@@ -285,6 +353,19 @@ Deno.serve(async (req) => {
             typeof session.subscription === 'string' ? session.subscription : session.subscription.id;
           const sub = await stripe.subscriptions.retrieve(subId);
           await syncSubscription(sub);
+          // Pontos da mensalidade paga agora (1ª fatura). A renovação vem no
+          // invoice.paid ('subscription_cycle'). Idempotente por (subscription_start, session.id).
+          const userId = session.metadata?.user_id;
+          if (userId && session.amount_total) {
+            await creditPoints({
+              userId,
+              valorCentavos: session.amount_total,
+              motivo: 'assinatura',
+              refType: 'subscription_start',
+              refId: session.id,
+              tierSlug: session.metadata?.tier_slug ?? null,
+            });
+          }
         } else if (session.mode === 'payment') {
           // Loja: cartão fecha aqui como 'paid'; Pix/Boleto podem vir 'unpaid'
           // (async) e o async_payment_succeeded abaixo finaliza pra 'pago'.
@@ -305,6 +386,11 @@ Deno.serve(async (req) => {
       case 'customer.subscription.updated':
       case 'customer.subscription.deleted': {
         await syncSubscription(event.data.object as Stripe.Subscription);
+        break;
+      }
+      // Renovação mensal da assinatura → credita pontos do ciclo.
+      case 'invoice.paid': {
+        await creditInvoicePoints(event.data.object as Stripe.Invoice);
         break;
       }
       default:

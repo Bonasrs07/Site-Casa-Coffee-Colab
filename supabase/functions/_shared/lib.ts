@@ -200,4 +200,56 @@ export async function getUserTierDiscount(
   return { tier_slug: tier.slug, discount_percent: pct > 0 && pct <= 100 ? pct : 0 };
 }
 
+// =============================================================================
+// PONTOS (Fase 3) — crédito server-side, sempre pelo ledger (append-only).
+// Regra: 1 ponto por R$1 × points_multiplier do tier ATIVO no momento (sem
+// assinatura = 1x). floor (arredonda pra baixo). O trigger update_points_balance
+// (0008) sincroniza o cache profiles.points_balance. Idempotente por (ref_type,
+// ref_id) — UNIQUE no ledger (0008): reprocessar o evento não duplica.
+// =============================================================================
+export async function getTierMultiplier(tierSlug: string | null): Promise<number> {
+  if (!tierSlug) return 1;
+  const { data } = await supabaseAdmin
+    .from('tiers')
+    .select('points_multiplier')
+    .eq('slug', tierSlug)
+    .maybeSingle();
+  const m = Number(data?.points_multiplier ?? 1);
+  return m > 0 ? m : 1;
+}
+
+// Calcula floor(reais × multiplicador) e insere o crédito no ledger.
+// Retorna os pontos creditados (0 se nada ou se já creditado — idempotência).
+export async function creditPoints(args: {
+  userId: string;
+  valorCentavos: number;
+  motivo: string;
+  refType: string;
+  refId: string;
+  tierSlug: string | null;
+}): Promise<number> {
+  const { userId, valorCentavos, motivo, refType, refId, tierSlug } = args;
+  if (!userId || !valorCentavos || valorCentavos <= 0) return 0;
+
+  const mult = await getTierMultiplier(tierSlug);
+  // 1 ponto por R$1 (valorCentavos/100) × multiplicador, arredondado PRA BAIXO.
+  const pontos = Math.floor((valorCentavos * mult) / 100);
+  if (pontos <= 0) return 0;
+
+  const { error } = await supabaseAdmin.from('points_ledger').insert({
+    user_id: userId,
+    delta: pontos,
+    motivo,
+    descricao: motivo,
+    ref_type: refType,
+    ref_id: refId,
+  });
+  // 23505 = (ref_type, ref_id) já existe → já foi creditado. Idempotente, ok.
+  if (error) {
+    if (error.code === '23505') return 0;
+    throw error;
+  }
+  return pontos;
+}
+
 export { Stripe };
