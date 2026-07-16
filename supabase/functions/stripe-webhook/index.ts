@@ -109,9 +109,6 @@ async function syncSubscription(sub: Stripe.Subscription): Promise<void> {
     .update({ tier_slug: novoTier })
     .eq('id', userId);
   if (profErr) throw profErr;
-
-  // TODO (Fase 3): creditar PONTOS de assinatura aqui (points_ledger append-only,
-  // idempotente por event.id). Agora NÃO — só assinatura/tier nesta leva.
 }
 
 // =============================================================================
