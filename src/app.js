@@ -32,6 +32,11 @@ import {
   MessageCircle,
   User,
   LogOut,
+  Eye,
+  EyeOff,
+  Copy,
+  Check,
+  ArrowLeft,
 } from 'lucide';
 import { createClient } from '@supabase/supabase-js';
 
@@ -60,9 +65,33 @@ const LUCIDE_ICONS = {
   MessageCircle,
   User,
   LogOut,
+  Eye,
+  EyeOff,
+  Copy,
+  Check,
+  ArrowLeft,
 };
 function renderIcons() {
   createIcons({ icons: LUCIDE_ICONS });
+}
+
+// Liga todo botão [data-toggle-senha] do escopo pra mostrar/ocultar a senha do
+// input irmão (dentro do mesmo container .relative). Acessível (aria-*) e troca
+// o ícone eye ↔ eye-off. Reutilizado no login e no cadastro.
+function setupPasswordToggles(scope) {
+  scope.querySelectorAll('[data-toggle-senha]').forEach((btn) => {
+    const input = btn.parentElement?.querySelector('input');
+    if (!input) return;
+    btn.addEventListener('click', () => {
+      const revelando = input.type === 'password';
+      input.type = revelando ? 'text' : 'password';
+      btn.setAttribute('aria-pressed', String(revelando));
+      btn.setAttribute('aria-label', revelando ? 'ocultar senha' : 'mostrar senha');
+      btn.innerHTML = `<i data-lucide="${revelando ? 'eye-off' : 'eye'}" class="h-5 w-5"></i>`;
+      renderIcons();
+      input.focus();
+    });
+  });
 }
 
 // --- Dados da marca (fonte única) ----------------------------------------------
@@ -1354,6 +1383,8 @@ function initCadastroPage() {
   const form = document.querySelector('[data-cadastro-form]');
   if (!form) return;
 
+  setupPasswordToggles(form); // olhinho nas duas senhas
+
   const erroEl = form.querySelector('[data-form-erro]');
   const btn = form.querySelector('[type="submit"]');
   const mostrarErro = (msg) => {
@@ -1435,6 +1466,8 @@ function initLoginPage() {
   const btn = form.querySelector('[type="submit"]');
   const resetMsg = form.querySelector('[data-reset-msg]');
   const redirect = sanitizeRedirect(new URLSearchParams(window.location.search).get('redirect'));
+
+  setupPasswordToggles(form); // olhinho de mostrar/ocultar senha
 
   const mostrarErro = (msg) => {
     if (!erroEl) return;

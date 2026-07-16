@@ -53,17 +53,29 @@
 
             <div class="mt-4">
               <label for="cad-senha" class="block text-sm font-medium text-cafe">senha</label>
-              <input id="cad-senha" name="senha" type="password" autocomplete="new-password" required minlength="8"
-                class="mt-1 w-full rounded-xl border border-cafe/20 bg-branco/70 px-4 py-2.5 text-cafe placeholder:text-cafe/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-terracota"
-                placeholder="pelo menos 8 caracteres" />
+              <div class="relative mt-1">
+                <input id="cad-senha" name="senha" type="password" autocomplete="new-password" required minlength="8"
+                  class="w-full rounded-xl border border-cafe/20 bg-branco/70 px-4 py-2.5 pr-12 text-cafe placeholder:text-cafe/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-terracota"
+                  placeholder="pelo menos 8 caracteres" />
+                <button type="button" data-toggle-senha aria-label="mostrar senha" aria-pressed="false"
+                  class="absolute inset-y-0 right-0 grid w-11 place-items-center rounded-r-xl text-cafe/50 hover:text-terracota focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-terracota">
+                  <i data-lucide="eye" class="h-5 w-5"></i>
+                </button>
+              </div>
               <p class="mt-1 text-xs text-cafe/50">pelo menos 8 caracteres — escolhe uma que só tu saiba.</p>
             </div>
 
             <div class="mt-4">
               <label for="cad-confirma" class="block text-sm font-medium text-cafe">confirma a senha</label>
-              <input id="cad-confirma" name="confirma" type="password" autocomplete="new-password" required minlength="8"
-                class="mt-1 w-full rounded-xl border border-cafe/20 bg-branco/70 px-4 py-2.5 text-cafe placeholder:text-cafe/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-terracota"
-                placeholder="a mesma senha de novo" />
+              <div class="relative mt-1">
+                <input id="cad-confirma" name="confirma" type="password" autocomplete="new-password" required minlength="8"
+                  class="w-full rounded-xl border border-cafe/20 bg-branco/70 px-4 py-2.5 pr-12 text-cafe placeholder:text-cafe/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-terracota"
+                  placeholder="a mesma senha de novo" />
+                <button type="button" data-toggle-senha aria-label="mostrar senha" aria-pressed="false"
+                  class="absolute inset-y-0 right-0 grid w-11 place-items-center rounded-r-xl text-cafe/50 hover:text-terracota focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-terracota">
+                  <i data-lucide="eye" class="h-5 w-5"></i>
+                </button>
+              </div>
             </div>
 
             <p class="mt-4 hidden rounded-xl bg-terracota/10 px-4 py-3 text-sm text-terracota" data-form-erro aria-live="polite"></p>
