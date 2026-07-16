@@ -288,6 +288,42 @@ Toda a lógica sensível fica nas **Edge Functions** (`supabase/functions/`), nu
 
 ---
 
+## Fidelidade / Pontos (Fase 3)
+
+O `points_ledger` (0001, append-only) é a **fonte da verdade**; `profiles.points_balance`
+é um **cache** que nunca diverge (trigger). Todo cálculo de saldo é server-side; o front
+só LÊ (RLS: cada um lê o próprio ledger).
+
+- **Regra (travada):** 1 ponto por R$1 × `tiers.points_multiplier` do tier ATIVO no
+  momento (sem assinatura = 1x). Loja: sobre o total **já com desconto**. Sempre `floor`.
+  Ex.: R$49,41 no Ouro (1,5x) → `floor(74.115)` = 74.
+- **Migration `0008_points`**: `points_ledger.ref_type/ref_id` (+ UNIQUE parcial pra
+  anti-duplicação), trigger `update_points_balance` (soma o delta no cache; seta a GUC
+  `casa.trusted_points` pra o `prevent_points_tamper` liberar o write server-side),
+  `recalc_points_balance` (reparo, só service_role), `redeem_reward` (resgate ATÔMICO com
+  `for update`), `rewards_catalog.slug/cupom_valor_centavos` + seed de recompensas. O
+  `motivo` do ledger virou texto livre em PT (`'compra na loja'`, `'assinatura'`,
+  `'renovação da assinatura'`, `'resgate: <nome>'`) — o CHECK restritivo foi removido.
+- **Crédito (stripe-webhook, via `creditPoints` de `_shared/lib.ts`)**: loja →
+  `checkout.session.completed`/`async_payment_succeeded` (só quando `pago`), ref `order`;
+  assinatura → `checkout.session.completed` (1ª mensalidade), ref `subscription_start`;
+  renovação → **`invoice.paid`** com `billing_reason='subscription_cycle'` (a
+  `subscription_create` é ignorada — já creditada), ref `subscription_renewal`. Idempotente
+  por `(ref_type, ref_id)` + `stripe_events`. Crédito **nunca** vem do client.
+- **Resgate (`redeem-reward` → RPC `redeem_reward`)**: valida JWT, chama a função SQL via
+  service_role com o id do PRÓPRIO usuário. A função (revogada de anon/authenticated) trava
+  a linha do reward, valida saldo pelo LEDGER/estoque, lança o negativo, cria `redemptions`,
+  baixa estoque e gera cupom `CASA-XXXX` (30 dias) se for do tipo cupom. Resgate duplo é
+  impossível (lock). Saldo insuficiente → erro gentil, sem débito.
+- **Front**: `conta/pontos.html` (`initPontosPage`, atrás do `requireAuth`) — saldo,
+  multiplicador do tier, extrato do ledger e grid de recompensas com "resgatar" (desabilitado
+  gentil "faltam X pontos" quando não dá). O perfil linka pro extrato; a `checkout-sucesso`
+  sonda o ledger pelo `session_id` e mostra "+X pontos 💛". Tom acolhedor, ZERO cara de cassino.
+- **Go-live:** adicionar o evento **`invoice.paid`** ao endpoint de webhook (test e live) e
+  fazer deploy do `redeem-reward`. Nenhuma regra de pontos muda entre test e live.
+
+---
+
 ## Responsividade
 
 - **Mobile-first**, funcionando desde **~320px** (Galaxy Pocket) até **ultrawide (2560px+)**.
@@ -349,5 +385,5 @@ Todo SQL que precisa rodar no SQL Editor do Supabase vira um arquivo numerado em
 - Cada migration deve ser autocontida e, quando possível, idempotente (IF NOT EXISTS / CREATE OR REPLACE).
 - Ao gerar migrations, SEMPRE diga ao humano exatamente quais arquivos rodar e em que ordem.
 - Não existe mais um schema.sql único — as migrations numeradas são a fonte da verdade do banco.
-- Aplicadas até agora: `0001_init` (tabelas + funções de papel + triggers), `0002_rls` (RLS + policies), `0003_seed` (tiers/produtos/conquistas/parceiros), `0004_reconcile` (5 tabelas da Fase 3: `rewards_catalog`, `events`, `coupons`, `pos_webhook_events`, `unclaimed_points` + colunas `tiers.points_multiplier/discount_percent` e `profiles.points_balance/tier_slug`), `0005_profiles_phone` (coluna `profiles.telefone` + `handle_new_user` populando telefone + trigger `prevent_points_tamper` blindando `points_balance`/`tier_slug` contra escrita do client).
+- Aplicadas até agora: `0001_init` (tabelas + funções de papel + triggers), `0002_rls` (RLS + policies), `0003_seed` (tiers/produtos/conquistas/parceiros), `0004_reconcile` (5 tabelas da Fase 3: `rewards_catalog`, `events`, `coupons`, `pos_webhook_events`, `unclaimed_points` + colunas `tiers.points_multiplier/discount_percent` e `profiles.points_balance/tier_slug`), `0005_profiles_phone` (coluna `profiles.telefone` + `handle_new_user` populando telefone + trigger `prevent_points_tamper` blindando `points_balance`/`tier_slug` contra escrita do client), `0006_stripe` (`stripe_events` + `profiles.stripe_customer_id` + UNIQUE em `subscriptions.stripe_subscription_id` + price IDs dos tiers), `0007_orders_stripe` (UNIQUE em `orders.stripe_checkout_id` pra idempotência da loja), `0008_points` (Fase 3: `points_ledger.ref_type/ref_id` + UNIQUE `(ref_type,ref_id)`, trigger `update_points_balance` que sincroniza o cache, `prevent_points_tamper` com bypass via GUC `casa.trusted_points`, `recalc_points_balance`, `redeem_reward` atômica, `rewards_catalog.slug/cupom_valor_centavos` + seed de recompensas).
 - `partners` e `tiers` têm PK = **slug**; FKs pra elas seguem a convenção `*_slug` (ex.: `profiles.tier_slug`, `rewards_catalog.partner_slug`), não `*_id`.
