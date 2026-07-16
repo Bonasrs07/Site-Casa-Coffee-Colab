@@ -6,3 +6,6 @@ dist/
 .env.*
 !.env.example
 .vite/
+
+# Supabase CLI: estado local de link/temp (não versionar)
+supabase/.temp/
