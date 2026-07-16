@@ -1244,9 +1244,37 @@ function initPlanosPage() {
 
 // Página de sucesso do checkout: compra concluída → esvazia o carrinho local.
 // (A fonte da verdade do pedido é o banco, gravado pelo webhook; o carrinho é só UI.)
-function initCheckoutSucessoPage() {
+// Também mostra "+X pontos" quando o webhook terminar de creditar (é assíncrono,
+// então a gente sonda o ledger algumas vezes pelo session_id da URL).
+async function initCheckoutSucessoPage() {
   if (!document.querySelector('[data-checkout-sucesso]')) return;
   Cart.clearCart();
+
+  const slot = document.querySelector('[data-pontos-credito]');
+  if (!slot || !supabase) return;
+
+  const sessionId = new URLSearchParams(window.location.search).get('session_id');
+  if (!sessionId) return;
+
+  const session = await getSession();
+  if (!session) return;
+
+  // O crédito de pontos vem pelo webhook (idempotente, ref_id = session_id).
+  // Sonda o ledger algumas vezes; se aparecer, mostra o carinho. Sem drama se não.
+  for (let tentativa = 0; tentativa < 5; tentativa++) {
+    const { data } = await supabase
+      .from('points_ledger')
+      .select('delta')
+      .eq('user_id', session.user.id)
+      .eq('ref_id', sessionId)
+      .maybeSingle();
+    if (data && Number(data.delta) > 0) {
+      slot.textContent = `+${Number(data.delta).toLocaleString('pt-BR')} pontos pra ti 💛`;
+      slot.classList.remove('hidden');
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 1500)); // espera o webhook processar
+  }
 }
 
 // =============================================================================
@@ -1501,6 +1529,7 @@ async function initPerfilPage() {
         <div class="rounded-2xl bg-branco/60 p-4 ring-1 ring-cafe/10">
           <dt class="text-xs uppercase tracking-wide text-cafe/50">teus pontos</dt>
           <dd class="mt-1 font-titulo text-2xl text-terracota">${pontos}</dd>
+          <a href="/pages/conta/pontos.html" class="mt-1 inline-block text-xs font-medium text-terracota hover:underline">ver extrato e resgatar</a>
         </div>
         <div class="rounded-2xl bg-branco/60 p-4 ring-1 ring-cafe/10">
           <dt class="text-xs uppercase tracking-wide text-cafe/50">teu plano</dt>
@@ -1631,6 +1660,247 @@ async function initPerfilPage() {
   root.querySelector('[data-signout]')?.addEventListener('click', doSignOut);
 }
 
+// --- Pontos + Recompensas (área logada) ----------------------------------------
+// Saldo (cache profiles.points_balance, mantido em sincronia pelo ledger),
+// multiplicador do tier, extrato do ledger e grid de recompensas pra resgatar.
+// Todo cálculo de saldo é server-side; o resgate passa pela Edge Function
+// redeem-reward. Tudo do banco é escapado antes de ir pro DOM (anti-XSS).
+const REWARD_TIPO_LABEL = {
+  produto_loja: 'produto da loja',
+  cupom: 'cupom de desconto',
+  produto_local: 'parceiro local',
+};
+
+function formatarDataCurta(iso) {
+  try {
+    return new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+  } catch {
+    return '';
+  }
+}
+
+async function initPontosPage() {
+  const root = document.querySelector('[data-pontos-root]');
+  if (!root) return;
+
+  const session = await requireAuth();
+  if (!session) return; // já redirecionou pro login
+
+  // (Re)carrega tudo e renderiza. Chamado no início e após cada resgate.
+  const carregar = async () => {
+    const profile = await getProfile();
+    const saldo = Number(profile?.points_balance || 0);
+
+    // Multiplicador do tier atual (tiers é leitura pública).
+    let mult = 1;
+    let planoNome = null;
+    if (profile?.tier_slug && supabase) {
+      const { data: t } = await supabase
+        .from('tiers')
+        .select('nome, points_multiplier')
+        .eq('slug', profile.tier_slug)
+        .maybeSingle();
+      mult = Number(t?.points_multiplier || 1);
+      planoNome = t?.nome || profile.tier_slug;
+    }
+    const multTxt = String(mult).replace('.', ',');
+
+    // Recompensas ativas (leitura pública) + extrato do ledger (RLS: só o próprio).
+    const [{ data: rewards }, { data: ledger }] = await Promise.all([
+      supabase
+        .from('rewards_catalog')
+        .select('id, nome, tipo, custo_em_pontos, estoque')
+        .eq('ativo', true)
+        .order('custo_em_pontos', { ascending: true }),
+      supabase
+        .from('points_ledger')
+        .select('created_at, motivo, delta')
+        .eq('user_id', session.user.id)
+        .order('created_at', { ascending: false })
+        .limit(50),
+    ]);
+
+    const cardsRewards = (rewards || [])
+      .map((r) => {
+        const nome = escapeHtml(r.nome);
+        const custo = Number(r.custo_em_pontos);
+        const tipo = escapeHtml(REWARD_TIPO_LABEL[r.tipo] || r.tipo || '');
+        const esgotado = r.estoque !== null && r.estoque <= 0;
+        const podeResgatar = !esgotado && saldo >= custo;
+        const faltam = custo - saldo;
+
+        let botao;
+        if (esgotado) {
+          botao = `<button type="button" disabled class="btn-ghost mt-4 w-full cursor-not-allowed opacity-60">esgotado por ora</button>`;
+        } else if (podeResgatar) {
+          botao = `<button type="button" data-resgatar="${r.id}" data-nome="${nome}" data-custo="${custo}" class="btn-primary mt-4 w-full">resgatar</button>`;
+        } else {
+          botao = `<button type="button" disabled class="btn-ghost mt-4 w-full cursor-not-allowed opacity-70">faltam ${faltam.toLocaleString('pt-BR')} pontos</button>`;
+        }
+
+        return `
+          <article class="flex flex-col rounded-2xl bg-branco/60 p-5 ring-1 ring-cafe/10">
+            <p class="text-xs uppercase tracking-wide text-cafe/50">${tipo}</p>
+            <h3 class="mt-1 flex-1 font-titulo text-lg leading-tight">${nome}</h3>
+            <p class="mt-3 font-titulo text-xl text-terracota">${custo.toLocaleString('pt-BR')} <span class="text-sm font-normal text-cafe/60">pontos</span></p>
+            ${botao}
+          </article>`;
+      })
+      .join('');
+
+    const linhasExtrato = (ledger || []).length
+      ? ledger
+          .map((l) => {
+            const delta = Number(l.delta);
+            const positivo = delta >= 0;
+            const sinal = positivo ? '+' : '−';
+            const cor = positivo ? 'text-verde' : 'text-terracota';
+            return `
+              <li class="flex items-center justify-between gap-3 border-b border-cafe/10 py-3">
+                <div class="min-w-0">
+                  <p class="truncate text-sm text-cafe">${escapeHtml(l.motivo)}</p>
+                  <p class="text-xs text-cafe/50">${formatarDataCurta(l.created_at)}</p>
+                </div>
+                <span class="shrink-0 font-medium ${cor}">${sinal}${Math.abs(delta).toLocaleString('pt-BR')}</span>
+              </li>`;
+          })
+          .join('')
+      : `<li class="py-6 text-center text-sm text-cafe/60">teu extrato começa no teu primeiro café por aqui. 💛</li>`;
+
+    root.innerHTML = `
+      <div class="mx-auto max-w-4xl">
+        <p class="decor text-2xl sm:text-3xl">teus pontos</p>
+        <div class="mt-3 flex flex-wrap items-end gap-x-6 gap-y-2">
+          <p class="font-titulo text-5xl text-terracota">${saldo.toLocaleString('pt-BR')}</p>
+          <p class="pb-1 text-cafe/70">
+            ${
+              planoNome
+                ? `teu plano <span class="font-medium">${escapeHtml(planoNome)}</span> rende <span class="font-medium">${multTxt}x</span> pontos`
+                : `teus pontos rendem <span class="font-medium">1x</span> — um plano faz render mais, quando fizer sentido pra ti`
+            }
+          </p>
+        </div>
+
+        <!-- Resultado do resgate (preenchido pelo app.js) -->
+        <div class="mt-6 hidden" data-resgate-resultado></div>
+
+        <section class="mt-10">
+          <h2 class="font-titulo text-2xl">o que dá pra resgatar</h2>
+          <p class="mt-1 text-sm text-cafe/60">pequenos agrados, no teu tempo. sem pressa, sem pegadinha.</p>
+          <div class="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            ${cardsRewards || '<p class="text-sm text-cafe/60">as recompensas chegam já já.</p>'}
+          </div>
+        </section>
+
+        <section class="mt-12 grid gap-8 lg:grid-cols-[1.2fr_1fr]">
+          <div>
+            <h2 class="font-titulo text-2xl">teu extrato</h2>
+            <ul class="mt-4">${linhasExtrato}</ul>
+          </div>
+          <aside class="rounded-2xl bg-bege/60 p-5 ring-1 ring-cafe/10">
+            <h2 class="font-titulo text-xl">como funciona</h2>
+            <ul class="mt-3 space-y-2 text-sm text-cafe/75">
+              <li>· 1 ponto a cada R$1 que tu gasta com a gente.</li>
+              <li>· teu plano multiplica isso (Ouro rende 1,5x, por exemplo).</li>
+              <li>· na loja, os pontos contam sobre o valor já com teu desconto.</li>
+              <li>· é só juntar e trocar por um agrado quando quiser.</li>
+            </ul>
+          </aside>
+        </section>
+
+        <div class="mt-10 border-t border-cafe/10 pt-6">
+          <a href="/pages/conta/perfil.html" class="btn-ghost"><i data-lucide="arrow-left" class="h-4 w-4"></i>voltar pra conta</a>
+        </div>
+      </div>`;
+
+    renderIcons();
+    wireResgates();
+  };
+
+  // Mostra o resultado do resgate. Busca o elemento FRESCO no root (sobrevive ao
+  // re-render do carregar(), que é chamado antes desta função no caso de sucesso).
+  const mostrarResultado = (html, cor = 'bg-verde/10') => {
+    const resultado = root.querySelector('[data-resgate-resultado]');
+    if (!resultado) return;
+    resultado.className = `mt-6 rounded-2xl ${cor} p-5 ring-1 ring-cafe/10`;
+    resultado.innerHTML = html; // conteúdo controlado (strings do banco já escapadas)
+    resultado.classList.remove('hidden');
+    resultado.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    renderIcons();
+  };
+
+  // Liga os botões "resgatar": confirma, chama a Edge Function, mostra o resultado.
+  function wireResgates() {
+    root.querySelectorAll('[data-resgatar]').forEach((btn) =>
+      btn.addEventListener('click', async () => {
+        const id = btn.getAttribute('data-resgatar');
+        const nome = btn.getAttribute('data-nome') || 'essa recompensa';
+        const custo = btn.getAttribute('data-custo');
+        if (!window.confirm(`resgatar "${nome}" por ${custo} pontos?`)) return;
+        if (!supabase) return;
+
+        const texto = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'resgatando…';
+        try {
+          const { data, error } = await supabase.functions.invoke('redeem-reward', {
+            body: { reward_id: id },
+          });
+          if (error || !data?.ok) {
+            const msg = data?.error || 'não deu pra resgatar agora. tenta de novo daqui a pouco? 💛';
+            mostrarResultado(`<p class="text-sm text-cafe">${escapeHtml(msg)}</p>`, 'bg-caramelo/15');
+            btn.disabled = false;
+            btn.textContent = texto;
+            return;
+          }
+
+          // Sucesso: se veio código de cupom, monta o bloco com botão copiar.
+          const codigo = data.codigo ? escapeHtml(data.codigo) : null;
+          const cupomHtml = codigo
+            ? `<div class="mt-3 flex flex-wrap items-center gap-3">
+                 <code class="rounded-lg bg-branco px-3 py-1.5 font-mono text-lg tracking-wider text-terracota ring-1 ring-cafe/10">${codigo}</code>
+                 <button type="button" data-copiar-cupom="${codigo}" class="btn-ghost text-sm"><i data-lucide="copy" class="h-4 w-4"></i>copiar</button>
+                 <span class="text-xs text-cafe/60">vale por 30 dias</span>
+               </div>`
+            : '';
+
+          // Recarrega saldo/extrato/recompensas PRIMEIRO (re-renderiza o root)…
+          await carregar();
+          // …e só então mostra o resultado (busca o elemento fresco → sobrevive).
+          mostrarResultado(
+            `<p class="font-titulo text-lg">resgatado com carinho 💛</p>
+             <p class="mt-1 text-sm text-cafe/75">${escapeHtml(String(data.reward || nome))} — teu novo saldo é <span class="font-medium">${Number(data.saldo || 0).toLocaleString('pt-BR')}</span> pontos.</p>
+             ${cupomHtml}`
+          );
+        } catch {
+          mostrarResultado(
+            `<p class="text-sm text-cafe">a gente não conseguiu falar com o servidor agora. confere tua conexão?</p>`,
+            'bg-caramelo/15'
+          );
+          btn.disabled = false;
+          btn.textContent = texto;
+        }
+      })
+    );
+
+    // Copiar código do cupom.
+    root.querySelectorAll('[data-copiar-cupom]').forEach((b) =>
+      b.addEventListener('click', async () => {
+        const codigo = b.getAttribute('data-copiar-cupom');
+        try {
+          await navigator.clipboard.writeText(codigo);
+          b.innerHTML = '<i data-lucide="check" class="h-4 w-4"></i>copiado';
+          renderIcons();
+        } catch {
+          /* clipboard indisponível — o código fica visível pra copiar à mão */
+        }
+      })
+    );
+  }
+
+  await carregar();
+}
+
 // --- Confirmação de e-mail (retorno do link) -----------------------------------
 // O supabase-js detecta a sessão na URL (detectSessionInUrl é padrão). Se logou,
 // oferece ir pra conta; se não (link velho/expirado), manda pro login com carinho.
@@ -1688,6 +1958,7 @@ export function initSite() {
   initCadastroPage(); // só age se houver [data-cadastro-form]
   initLoginPage(); // só age se houver [data-login-form]
   initPerfilPage(); // só age se houver [data-perfil-root] (protege a rota)
+  initPontosPage(); // só age se houver [data-pontos-root] (protege a rota)
   initAuthConfirmadoPage(); // só age se houver [data-auth-confirmado-root]
   initCarousels(); // só age se houver [data-carousel]
   renderIcons(); // ícones do header/footer + conteúdo estático restante

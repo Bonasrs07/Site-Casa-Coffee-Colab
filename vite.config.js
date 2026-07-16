@@ -38,6 +38,7 @@ export default defineConfig({
         checkoutSucesso: resolve(root, 'pages/checkout-sucesso.html'),
         checkoutCancelado: resolve(root, 'pages/checkout-cancelado.html'),
         perfil: resolve(root, 'pages/conta/perfil.html'),
+        pontos: resolve(root, 'pages/conta/pontos.html'),
       },
     },
   },
